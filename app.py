@@ -159,10 +159,13 @@ if st.button("🚀 Start Market Scan", width="stretch"):
             if not results_df.empty:
                 st.session_state.results_df = results_df.sort_values(by='Signal Time', ascending=False)
                 total_stocks = results_df['Stock Name'].nunique()
-                above = len(results_df[results_df['CPR_Position'].str.contains('ABOVE', na=False)])
-                below = len(results_df[results_df['CPR_Position'].str.contains('BELOW', na=False)])
-                inside = len(results_df[results_df['CPR_Position'].str.contains('INSIDE', na=False)])
-                st.toast(f"✅ {elapsed:.1f}s | {total_stocks} stocks | Above TC:{above} | Below BC:{below} | Inside:{inside}", icon="⚡")
+                if 'CPR_Position' in results_df.columns:
+                    above = len(results_df[results_df['CPR_Position'].str.contains('ABOVE', na=False)])
+                    below = len(results_df[results_df['CPR_Position'].str.contains('BELOW', na=False)])
+                    inside = len(results_df[results_df['CPR_Position'].str.contains('INSIDE', na=False)])
+                    st.toast(f"✅ {elapsed:.1f}s | {total_stocks} stocks | Above TC:{above} | Below BC:{below} | Inside:{inside}", icon="⚡")
+                else:
+                    st.toast(f"✅ {elapsed:.1f}s | {total_stocks} stocks", icon="⚡")
             else:
                 st.session_state.results_df = "EMPTY"
                 st.toast(f"✅ {elapsed:.1f}s | No data found", icon="ℹ️")
@@ -183,11 +186,11 @@ if st.session_state.results_df is not None:
             full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) < 0.50 if x != '' else False)]
         elif signal_filter == "Wide CPR (ATR>1.00)":
             full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) > 1.00 if x != '' else False)]
-        elif signal_filter == "Above TC (Bullish)":
+        elif signal_filter == "Above TC (Bullish)" and 'CPR_Position' in full_df.columns:
             full_df = full_df[full_df['CPR_Position'].str.contains('ABOVE', na=False)]
-        elif signal_filter == "Below BC (Bearish)":
+        elif signal_filter == "Below BC (Bearish)" and 'CPR_Position' in full_df.columns:
             full_df = full_df[full_df['CPR_Position'].str.contains('BELOW', na=False)]
-        elif signal_filter == "Inside CPR (Neutral)":
+        elif signal_filter == "Inside CPR (Neutral)" and 'CPR_Position' in full_df.columns:
             full_df = full_df[full_df['CPR_Position'].str.contains('INSIDE', na=False)]
 
         # Show last date only in table
@@ -241,7 +244,9 @@ if st.session_state.results_df is not None:
             other_cols = [c for c in display_df.columns if c not in display_cols]
             ordered_cols = display_cols + other_cols
 
-            styled_df = display_df[ordered_cols].style.map(style_cpr, subset=["CPR_Type"]).map(style_position, subset=["CPR_Position"])
+            styled_df = display_df[ordered_cols].style.map(style_cpr, subset=["CPR_Type"])
+            if 'CPR_Position' in display_df.columns:
+                styled_df = styled_df.map(style_position, subset=["CPR_Position"])
 
             st.dataframe(
                 styled_df,
