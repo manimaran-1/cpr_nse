@@ -193,79 +193,80 @@ if st.session_state.results_df is not None:
         elif signal_filter == "Inside CPR (Neutral)" and 'CPR_Position' in full_df.columns:
             full_df = full_df[full_df['CPR_Position'].str.contains('INSIDE', na=False)]
 
-        # Display mode selector
-        col_mode1, col_mode2 = st.columns([1, 1])
-        with col_mode1:
-            display_mode = st.radio("Show candles", ["Latest Candle Per Stock", "Full Day"], horizontal=True, key="display_mode")
-        with col_mode2:
-            rows_per_page = st.selectbox("Rows per page", [50, 100, 200, 500], index=0, key="rows_per_page")
-
-        # Prepare display data
-        if display_mode == "Latest Candle Per Stock":
-            # One row per stock — the latest candle only
-            if 'Signal Time' in full_df.columns:
-                full_df['_sort_time'] = pd.to_datetime(full_df['Signal Time'], errors='coerce', dayfirst=True)
-                display_df = full_df.sort_values('_sort_time').groupby('Stock Name').tail(1).drop(columns=['_sort_time'])
-            else:
-                display_df = full_df.groupby('Stock Name').tail(1)
-            display_df = display_df.sort_values('Stock Name')
+        # Show last date only in table
+        if 'Signal Time' in full_df.columns and not full_df['Signal Time'].isna().all():
+            signal_dates = pd.to_datetime(full_df['Signal Time'], errors='coerce', dayfirst=True)
+            last_date = signal_dates.max().date()
+            display_df = full_df[signal_dates.dt.date == last_date].copy()
         else:
-            # Full day — show all candles from the last date
-            if 'Signal Time' in full_df.columns and not full_df['Signal Time'].isna().all():
-                signal_dates = pd.to_datetime(full_df['Signal Time'], errors='coerce', dayfirst=True)
-                last_date = signal_dates.max().date()
-                display_df = full_df[signal_dates.dt.date == last_date].copy()
-            else:
-                display_df = full_df.copy()
+            display_df = full_df.copy()
+            last_date = None
 
         if full_df.empty:
             st.warning("No stocks match your filter.")
         else:
-            total_rows = len(display_df)
-            total_stocks = display_df['Stock Name'].nunique() if 'Stock Name' in display_df.columns else total_rows
+            total_signals = len(full_df)
+            display_count = len(display_df)
+            if last_date:
+                st.info(f"📅 Showing **{display_count}** stocks from **{last_date.strftime('%d-%b-%Y')}** | Total: **{total_signals}** rows")
 
-            # Pagination
-            total_pages = max(1, (total_rows + rows_per_page - 1) // rows_per_page)
+            # === PAGINATION ===
+            ROWS_PER_PAGE_OPTIONS = [50, 100, 200, 500]
+            col_pg1, col_pg2, col_pg3, col_pg4 = st.columns([1, 1, 1, 2])
+            with col_pg1:
+                rows_per_page = st.selectbox("Rows per page", ROWS_PER_PAGE_OPTIONS, index=0, key="rows_per_page")
+            total_pages = max(1, (len(display_df) + rows_per_page - 1) // rows_per_page)
+            with col_pg2:
+                page_num = st.number_input("Page", min_value=1, max_value=total_pages, value=1, step=1, key="page_num")
+            with col_pg3:
+                st.markdown(f"<div style='padding-top: 32px; color: #888;'>of {total_pages} pages</div>", unsafe_allow_html=True)
+            with col_pg4:
+                pg_start = (page_num - 1) * rows_per_page
+                pg_end = min(pg_start + rows_per_page, len(display_df))
+                st.markdown(f"<div style='padding-top: 32px; color: #888;'>Rows {pg_start + 1}–{pg_end} of {len(display_df)}</div>", unsafe_allow_html=True)
 
-            if 'current_page' not in st.session_state:
-                st.session_state.current_page = 1
-            if st.session_state.current_page > total_pages:
-                st.session_state.current_page = 1
+            page_df = display_df.iloc[pg_start:pg_end]
 
-            col_info, col_nav = st.columns([2, 1])
-            with col_info:
-                st.info(f"📊 **{total_stocks}** stocks | **{total_rows}** rows | Page **{st.session_state.current_page}** of **{total_pages}**")
-            with col_nav:
-                col_prev, col_page, col_next = st.columns([1, 2, 1])
-                with col_prev:
-                    if st.button("◀ Prev", disabled=(st.session_state.current_page <= 1)):
-                        st.session_state.current_page -= 1
-                        st.rerun()
-                with col_page:
-                    page_input = st.number_input("Page", min_value=1, max_value=total_pages, value=st.session_state.current_page, key="page_input", label_visibility="collapsed")
-                    if page_input != st.session_state.current_page:
-                        st.session_state.current_page = page_input
-                        st.rerun()
-                with col_next:
-                    if st.button("Next ▶", disabled=(st.session_state.current_page >= total_pages)):
-                        st.session_state.current_page += 1
-                        st.rerun()
+            def style_cpr(val):
+                val_str = str(val)
+                if 'EXTREME NARROW' in val_str:
+                    return "background-color: #0d47a1; color: white; font-weight: bold;"
+                elif 'VERY NARROW' in val_str:
+                    return "background-color: #1b5e20; color: white; font-weight: bold;"
+                elif 'NARROW' in val_str:
+                    return "background-color: #2e7d32; color: white;"
+                elif 'NORMAL' in val_str:
+                    return "background-color: #1565c0; color: white;"
+                elif 'SLIGHTLY WIDE' in val_str:
+                    return "background-color: #e65100; color: white;"
+                elif 'WIDE' in val_str:
+                    return "background-color: #b71c1c; color: white;"
+                elif 'VERY WIDE' in val_str:
+                    return "background-color: #424242; color: #ff8a80;"
+                return ""
 
-            # Slice for current page
-            start_idx = (st.session_state.current_page - 1) * rows_per_page
-            end_idx = start_idx + rows_per_page
-            page_df = display_df.iloc[start_idx:end_idx]
+            def style_position(val):
+                val_str = str(val)
+                if 'ABOVE' in val_str:
+                    return "background-color: #1b5e20; color: white; font-weight: bold;"
+                elif 'BELOW' in val_str:
+                    return "background-color: #b71c1c; color: white; font-weight: bold;"
+                elif 'INSIDE' in val_str:
+                    return "background-color: #e65100; color: white;"
+                return ""
 
-            # Select and order columns
             display_cols = ['Stock Name', 'Open', 'High', 'Low', 'Close', 'CPR_Position', 'Signal Time', 'Volume',
                            'CPR_PP', 'CPR_BC', 'CPR_TC', 'CPR_Width', 'CPR_ATR', 'CPR_ATR_Ratio', 'CPR_Type']
             display_cols = [c for c in display_cols if c in page_df.columns]
             other_cols = [c for c in page_df.columns if c not in display_cols]
             ordered_cols = display_cols + other_cols
 
-            # Display WITHOUT style.map() for performance
+            styled_df = page_df[ordered_cols].style.map(style_cpr, subset=["CPR_Type"])
+            if 'CPR_Position' in page_df.columns:
+                styled_df = styled_df.map(style_position, subset=["CPR_Position"])
+
             st.dataframe(
-                page_df[ordered_cols],
+                styled_df,
                 column_config={
                     "Stock Name": "Symbol",
                     "Open": st.column_config.NumberColumn("Open", format="₹ %.2f"),
@@ -281,10 +282,10 @@ if st.session_state.results_df is not None:
                     "CPR_Width": st.column_config.NumberColumn("CPR Width", format="%.2f", help="CPR Width in points (TC - BC)"),
                     "CPR_ATR": st.column_config.NumberColumn("ATR(14)", format="%.2f", help="Average True Range (14 periods)"),
                     "CPR_ATR_Ratio": st.column_config.NumberColumn("ATR Ratio", format="%.3f", help="CPR Width / ATR(14). <0.30=Narrow, 0.30-1.00=Normal, >1.00=Wide"),
-                    "CPR_Type": st.column_config.TextColumn("CPR Type", help="ATR-Normalized: EXTREME NARROW | VERY NARROW | NARROW | NORMAL | SLIGHTLY WIDE | WIDE | VERY WIDE"),
+                    "CPR_Type": st.column_config.TextColumn("CPR Type", help="ATR-Normalized classification"),
                 },
                 hide_index=True,
-                use_container_width=True,
+                width="stretch"
             )
 
             # Download button
