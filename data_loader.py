@@ -490,14 +490,14 @@ def fetch_data_yf_lib(symbol, interval='1h', period='60d'):
 # ============================================================
 
 _DATA_SOURCE_MAP = {
-    "auto": "yahoo",
+    "auto": "yfinance",
     "yahoo": "yahoo",
-    "yahoo finance direct api": "yahoo",
+    "yfapi": "yahoo",
     "yfinance": "yfinance",
-    "yfinance library": "yfinance",
+    "yflib": "yfinance",
 }
 
-_active_data_source = "yahoo"
+_active_data_source = "yfinance"
 
 
 def set_data_source(source):
@@ -525,7 +525,7 @@ def fetch_data(symbol, period='1y', interval='1d', retries=2, timeout=10, data_s
     symbol = normalize_symbol(symbol)
 
     ds = data_source or _active_data_source
-    ds = _DATA_SOURCE_MAP.get(ds.lower() if ds else "yahoo", "yahoo")
+    ds = _DATA_SOURCE_MAP.get(ds.lower() if ds else "yfinance", "yfinance")
 
     # Try primary source
     if ds == "yfinance":

@@ -85,7 +85,7 @@ selected_timeframe = st.sidebar.selectbox("Timeframe (Interval)", timeframe_opti
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📡 Data Source")
-data_source_options = ["Yahoo Finance Direct API", "yfinance Library"]
+data_source_options = ["yflib", "yfapi"]
 selected_data_source = st.sidebar.selectbox("Data Fetch Method", data_source_options, index=0)
 
 st.sidebar.markdown("---")
@@ -127,10 +127,10 @@ if st.button("🚀 Start Market Scan", width="stretch"):
         st.error("No valid symbols found.")
     else:
         ds_map = {
-            "Yahoo Finance Direct API": "yahoo",
-            "yfinance Library": "yfinance",
+            "yflib": "yfinance",
+            "yfapi": "yahoo",
         }
-        data_loader.set_data_source(ds_map.get(selected_data_source, "yahoo"))
+        data_loader.set_data_source(ds_map.get(selected_data_source, "yfinance"))
 
         progress_bar = st.progress(0, text="Initializing scan...")
 
@@ -210,22 +210,22 @@ if st.session_state.results_df is not None:
             if last_date:
                 st.info(f"📅 Showing **{display_count}** stocks from **{last_date.strftime('%d-%b-%Y')}** | Total: **{total_signals}** rows")
 
-            # === PAGINATION ===
-            ROWS_PER_PAGE_OPTIONS = [50, 100, 200, 500]
-            col_pg1, col_pg2, col_pg3, col_pg4 = st.columns([1, 1, 1, 2])
-            with col_pg1:
-                rows_per_page = st.selectbox("Rows per page", ROWS_PER_PAGE_OPTIONS, index=0, key="rows_per_page")
-            total_pages = max(1, (len(display_df) + rows_per_page - 1) // rows_per_page)
-            with col_pg2:
-                page_num = st.number_input("Page", min_value=1, max_value=total_pages, value=1, step=1, key="page_num")
-            with col_pg3:
-                st.markdown(f"<div style='padding-top: 32px; color: #888;'>of {total_pages} pages</div>", unsafe_allow_html=True)
-            with col_pg4:
-                pg_start = (page_num - 1) * rows_per_page
-                pg_end = min(pg_start + rows_per_page, len(display_df))
-                st.markdown(f"<div style='padding-top: 32px; color: #888;'>Rows {pg_start + 1}–{pg_end} of {len(display_df)}</div>", unsafe_allow_html=True)
-
-            page_df = display_df.iloc[pg_start:pg_end]
+            # Pagination only when rows > 4000
+            PAGE_SIZE = 4000
+            if len(display_df) > PAGE_SIZE:
+                total_pages = (len(display_df) + PAGE_SIZE - 1) // PAGE_SIZE
+                col_pg1, col_pg2, col_pg3 = st.columns([1, 1, 2])
+                with col_pg1:
+                    page_num = st.number_input("Page", min_value=1, max_value=total_pages, value=1, step=1, key="page_num")
+                with col_pg2:
+                    st.markdown(f"<div style='padding-top: 32px; color: #888;'>of {total_pages} pages</div>", unsafe_allow_html=True)
+                with col_pg3:
+                    pg_start = (page_num - 1) * PAGE_SIZE
+                    pg_end = min(pg_start + PAGE_SIZE, len(display_df))
+                    st.markdown(f"<div style='padding-top: 32px; color: #888;'>Rows {pg_start + 1}–{pg_end} of {len(display_df)}</div>", unsafe_allow_html=True)
+                show_df = display_df.iloc[pg_start:pg_end]
+            else:
+                show_df = display_df
 
             def style_cpr(val):
                 val_str = str(val)
@@ -257,12 +257,12 @@ if st.session_state.results_df is not None:
 
             display_cols = ['Stock Name', 'Open', 'High', 'Low', 'Close', 'CPR_Position', 'Signal Time', 'Volume',
                            'CPR_PP', 'CPR_BC', 'CPR_TC', 'CPR_Width', 'CPR_ATR', 'CPR_ATR_Ratio', 'CPR_Type']
-            display_cols = [c for c in display_cols if c in page_df.columns]
-            other_cols = [c for c in page_df.columns if c not in display_cols]
+            display_cols = [c for c in display_cols if c in show_df.columns]
+            other_cols = [c for c in show_df.columns if c not in display_cols]
             ordered_cols = display_cols + other_cols
 
-            styled_df = page_df[ordered_cols].style.map(style_cpr, subset=["CPR_Type"])
-            if 'CPR_Position' in page_df.columns:
+            styled_df = show_df[ordered_cols].style.map(style_cpr, subset=["CPR_Type"])
+            if 'CPR_Position' in show_df.columns:
                 styled_df = styled_df.map(style_position, subset=["CPR_Position"])
 
             st.dataframe(
