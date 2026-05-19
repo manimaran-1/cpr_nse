@@ -233,8 +233,8 @@ if st.button("🚀 Start Market Scan", width="stretch"):
                 st.session_state.results_df = results_df.sort_values(by='Signal Time', ascending=False)
                 total_stocks = results_df['Stock Name'].nunique()
                 pine_count = len(results_df[results_df['Pine Signal'] == 'BUY'])
-                narrow_count = len(results_df[results_df['CPR_Type'] == 'NARROW'])
-                wide_count = len(results_df[results_df['CPR_Type'] == 'WIDE'])
+                narrow_count = len(results_df[results_df['CPR_Type'].str.contains('NARROW', na=False)])
+                wide_count = len(results_df[results_df['CPR_Type'].str.contains('WIDE', na=False)])
                 st.toast(f"✅ Scan completed in {elapsed:.1f}s | {total_stocks} stocks | Pine BUY:{pine_count} | Narrow:{narrow_count} Wide:{wide_count}", icon="⚡")
             else:
                 st.session_state.results_df = "EMPTY"
@@ -248,35 +248,35 @@ if st.session_state.results_df is not None:
     if isinstance(st.session_state.results_df, str) and st.session_state.results_df == "EMPTY":
         st.warning("No matches found for the selected criteria.")
     else:
-        results_df = st.session_state.results_df.copy()
+        all_results_df = st.session_state.results_df.copy()
 
-        # === DATE RANGE FILTER ===
-        if 'Signal Time' in results_df.columns and not results_df['Signal Time'].isna().all():
-            signal_dates = pd.to_datetime(results_df['Signal Time'], errors='coerce', dayfirst=True)
-            valid_dates = signal_dates.dropna()
-            if not valid_dates.empty:
-                min_date = valid_dates.min().date()
-                max_date = valid_dates.max().date()
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    filter_start = st.date_input("From Date", value=min_date, min_value=min_date, max_value=max_date, key="signal_start")
-                with col_d2:
-                    filter_end = st.date_input("To Date", value=max_date, min_value=min_date, max_value=max_date, key="signal_end")
-                mask = (signal_dates.dt.date >= filter_start) & (signal_dates.dt.date <= filter_end)
-                results_df = results_df[mask.fillna(True)]
+        # === FILTER FULL DATA (for download) ===
+        full_df = all_results_df.copy()
 
-        # === SIGNAL FILTER ===
         if signal_filter == "Pine BUY Only":
-            results_df = results_df[results_df['Pine Signal'] == 'BUY']
+            full_df = full_df[full_df['Pine Signal'] == 'BUY']
         elif signal_filter == "Narrow CPR (ATR<0.50)":
-            results_df = results_df[results_df['CPR_ATR_Ratio'].apply(lambda x: float(x) < 0.50 if x != '' else False)]
+            full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) < 0.50 if x != '' else False)]
         elif signal_filter == "Wide CPR (ATR>1.00)":
-            results_df = results_df[results_df['CPR_ATR_Ratio'].apply(lambda x: float(x) > 1.00 if x != '' else False)]
+            full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) > 1.00 if x != '' else False)]
 
-        if results_df.empty:
+        # === SHOW ONLY LAST DATE DATA IN TABLE ===
+        if 'Signal Time' in full_df.columns and not full_df['Signal Time'].isna().all():
+            signal_dates = pd.to_datetime(full_df['Signal Time'], errors='coerce', dayfirst=True)
+            last_date = signal_dates.max().date()
+            display_df = full_df[signal_dates.dt.date == last_date].copy()
+        else:
+            display_df = full_df.copy()
+            last_date = None
+
+        if full_df.empty:
             st.warning("No signals match your filter.")
         else:
-            st.success(f"🎯 Found **{len(results_df)}** signals!")
+            # Summary metrics
+            total_signals = len(full_df)
+            display_count = len(display_df)
+            if last_date:
+                st.info(f"📅 Showing **{display_count}** signals from **{last_date.strftime('%d-%b-%Y')}** (latest date) | Total data: **{total_signals}** rows across all dates")
 
             def style_cpr(val):
                 val_str = str(val)
@@ -301,14 +301,15 @@ if st.session_state.results_df is not None:
                     return "background-color: #1b5e20; color: white; font-weight: bold;"
                 return ""
 
+            # Table shows last date only; download has all data
             display_cols = ['Stock Name', 'LTP', 'Pine Signal', 'Signal Time',
                            'CPR_PP', 'CPR_BC', 'CPR_TC', 'CPR_Width', 'CPR_ATR', 'CPR_ATR_Ratio', 'CPR_Type',
                            'RSI', 'Stoch RSI K', 'SMI', 'MACD', 'MACD_Hist']
-            display_cols = [c for c in display_cols if c in results_df.columns]
-            other_cols = [c for c in results_df.columns if c not in display_cols]
+            display_cols = [c for c in display_cols if c in display_df.columns]
+            other_cols = [c for c in display_df.columns if c not in display_cols]
             ordered_cols = display_cols + other_cols
 
-            styled_df = results_df[ordered_cols].style.map(style_cpr, subset=["CPR_Type"]).map(style_pine, subset=["Pine Signal"])
+            styled_df = display_df[ordered_cols].style.map(style_cpr, subset=["CPR_Type"]).map(style_pine, subset=["Pine Signal"])
 
             st.dataframe(
                 styled_df,
@@ -334,13 +335,14 @@ if st.session_state.results_df is not None:
                 width="stretch"
             )
 
+            # Download = ALL data, Telegram = ALL data
             col1, col2 = st.columns(2)
             with col1:
-                csv = results_df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Download Results (CSV)", csv, "results.csv", "text/csv", width="stretch")
+                csv = full_df.to_csv(index=False).encode('utf-8')
+                st.download_button(f"📥 Download Full Data ({len(full_df)} rows)", csv, "cpr_scan_full.csv", "text/csv", width="stretch")
             with col2:
                 if st.button("📤 Send to Telegram", width="stretch"):
-                    if send_to_telegram(results_df, selected_universe, selected_timeframe):
+                    if send_to_telegram(full_df, selected_universe, selected_timeframe):
                         st.success("✅ Results sent to Telegram!")
                     else:
                         st.error("❌ Failed to send to Telegram")
