@@ -1,0 +1,10 @@
+streamlit
+pandas
+numpy
+yfinance
+python-dotenv
+pyotp
+requests
+pytz
+pandas-ta-classic
+pyarrow
