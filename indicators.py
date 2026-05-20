@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 import pandas_ta_classic as ta
+import logging
+
+logger = logging.getLogger(__name__)
 
 def calculate_heikin_ashi(df):
     """
@@ -965,25 +968,37 @@ def score_money_flow_breakdown(df, pos):
     }
 
 
-def calculate_cpr(df, ref_df=None, daily_df=None):
+def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle Close", bhavcopy_lookup=None):
     """
     Calculate Central Pivot Range (CPR) with ATR-Normalized Width + Support/Resistance levels.
 
-    ref_df: pre-fetched reference timeframe DataFrame (daily/weekly/monthly).
-            For each bar in df, uses the PREVIOUS candle in ref_df for CPR.
-            If None, falls back to using previous bar in df itself.
+    Uses DAILY OHLC for accurate CPR levels (not aggregated intraday candles).
+    If daily_df is provided, uses it for prev day OHLC. Otherwise falls back to aggregating from df.
 
-    daily_df: daily OHLC data for ATR(14) calculation. If None, computes ATR from df.
+    Returns DataFrame with: CPR_PP, CPR_BC, CPR_TC, CPR_Width, CPR_ATR, CPR_ATR_Ratio, CPR_Type,
+                            CPR_R1, CPR_R2, CPR_R3, CPR_S1, CPR_S2, CPR_S3
 
-    Reference period per Zerodha Varsity:
-        - Daily chart    → ref_df = monthly data, prev month's candle
-        - 1h, 30m chart  → ref_df = weekly data, prev week's candle
-        - 1-15m chart    → ref_df = daily data, prev day's candle
+    Formulas (from previous day's H/L/C):
+        PP = (H + L + C) / 3
+        BC = (H + L) / 2
+        TC = 2 * PP - BC
+        Width = abs(TC - BC)
+        R1 = 2 * PP - L
+        R2 = PP + (H - L)
+        R3 = H + 2 * (PP - L)
+        S1 = 2 * PP - H
+        S2 = PP - (H - L)
+        S3 = L - 2 * (H - PP)
+        ATR Ratio = Width / ATR(14)
 
-    Formulas (Zerodha method):
-        PP = round((H + L + C) / 3, 2)
-        BC = round((H + L) / 2, 2)
-        TC = round((2 * PP) - BC, 2)
+    ATR-Normalized Classification:
+        < 0.15  : EXTREME NARROW
+        0.15-0.30: VERY NARROW
+        0.30-0.50: NARROW
+        0.50-1.00: NORMAL
+        1.00-1.50: SLIGHTLY WIDE
+        1.50-2.00: WIDE
+        > 2.00  : VERY WIDE
     """
     cpr_pp = pd.Series(np.nan, index=df.index)
     cpr_bc = pd.Series(np.nan, index=df.index)
@@ -1004,69 +1019,122 @@ def calculate_cpr(df, ref_df=None, daily_df=None):
     prev_close = pd.Series(np.nan, index=df.index)
     prev_volume = pd.Series(np.nan, index=df.index)
 
-    # ATR(14) from daily data for normalization
-    atr_source = daily_df if daily_df is not None and not daily_df.empty else df
-    atr_series = calculate_atr(atr_source, length=14)
+    # Use daily_df for ATR(14) when available (matches Zerodha), else fall back to intraday
+    dates = df.index.date
+    unique_dates = sorted(set(dates))
 
-    # Build ATR lookup by date (from daily data)
-    atr_by_date = {}
-    for dt in atr_source.index:
-        d = dt.date() if hasattr(dt, 'date') else dt
-        val = atr_series.loc[dt]
-        if not pd.isna(val):
-            atr_by_date[d] = float(val)
-
-    # Use ref_df if provided, otherwise fall back to df itself
-    if ref_df is not None and not ref_df.empty:
-        ref = ref_df
+    # Build daily OHLC lookup + ATR from daily data
+    daily_ohlc = {}
+    if daily_df is not None and not daily_df.empty:
+        atr_series = calculate_atr(daily_df, length=14)
+        for dt in daily_df.index:
+            d = dt.date() if hasattr(dt, 'date') else dt
+            row = daily_df.loc[dt]
+            atr_val = atr_series.loc[dt] if dt in atr_series.index else np.nan
+            
+            # Resolve close price based on selected method
+            close_val = float(row['close']) # "Without Correction (Standard EOD Close)" uses yfinance daily close
+            
+            if close_method == "Intraday Candle Close":
+                day_intraday = df[df.index.date == d]
+                if not day_intraday.empty:
+                    close_val = float(day_intraday['close'].iloc[-1])
+            elif close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
+                clean_sym = symbol.upper() if symbol else ""
+                if ":" in clean_sym:
+                    clean_sym = clean_sym.split(":")[1]
+                clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                
+                if clean_sym in bhavcopy_lookup:
+                    close_val = bhavcopy_lookup[clean_sym]['ltp']
+                    logger.debug(f"Bhavcopy LTP correct for {clean_sym}: {close_val}")
+                else:
+                    # Fallback to Intraday Candle Close if not found in Bhavcopy lookup
+                    day_intraday = df[df.index.date == d]
+                    if not day_intraday.empty:
+                        close_val = float(day_intraday['close'].iloc[-1])
+            
+            daily_ohlc[d] = {
+                'high': float(row['high']),
+                'low': float(row['low']),
+                'close': close_val,
+                'open': float(row['open']),
+                'volume': int(row['volume']) if 'volume' in row.index else 0,
+                'atr': float(atr_val) if not pd.isna(atr_val) else 0,
+            }
     else:
-        ref = df
+        # Fallback: aggregate from intraday
+        atr_series = calculate_atr(df, length=14)
+        for d in unique_dates:
+            mask = dates == d
+            day_data = df[mask]
+            if not day_data.empty:
+                close_val = float(day_data['close'].iloc[-1])
+                
+                # Apply Bhavcopy LTP if available on the fallback path too
+                if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
+                    clean_sym = symbol.upper() if symbol else ""
+                    if ":" in clean_sym:
+                        clean_sym = clean_sym.split(":")[1]
+                    clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                    if clean_sym in bhavcopy_lookup:
+                        close_val = bhavcopy_lookup[clean_sym]['ltp']
+                elif close_method == "Without Correction (Standard EOD Close)":
+                    # Fallback has no daily candle data so it will just use continuous close
+                    pass
+                    
+                daily_ohlc[d] = {
+                    'high': float(day_data['high'].max()),
+                    'low': float(day_data['low'].min()),
+                    'close': close_val,
+                    'open': float(day_data['open'].iloc[0]),
+                    'volume': int(day_data['volume'].sum()),
+                    'atr': 0,
+                }
 
-    # Drop the last candle from ref — it's the current (incomplete) period.
-    # We always need the PREVIOUS COMPLETED candle for CPR.
-    if len(ref) > 1:
-        ref = ref.iloc[:-1]
+    for i, d in enumerate(unique_dates):
+        if i == 0:
+            continue  # No previous day for first day
 
-    # Iterate through each bar in df, find the previous candle in ref
-    for i in range(len(df)):
-        bar_ts = df.index[i]
-        bar_date = bar_ts.date() if hasattr(bar_ts, 'date') else bar_ts
-
-        # Find the last completed candle in ref BEFORE this bar's timestamp
-        prev_candles = ref[ref.index < bar_ts]
-        if prev_candles.empty:
+        prev_d = unique_dates[i - 1]
+        if prev_d not in daily_ohlc:
             continue
 
-        prev_candle = prev_candles.iloc[-1]
-        prev_high_val = float(prev_candle['high'])
-        prev_low_val = float(prev_candle['low'])
-        prev_close_val = float(prev_candle['close'])
-        prev_open_val = float(prev_candle['open'])
-        prev_vol_val = int(prev_candle['volume']) if 'volume' in prev_candle.index else 0
+        prev = daily_ohlc[prev_d]
+        prev_high_val = prev['high']
+        prev_low_val = prev['low']
+        prev_close_val = prev['close']
 
-        # CPR formulas (Zerodha method)
-        pp = round((prev_high_val + prev_low_val + prev_close_val) / 3, 2)
-        bc = round((prev_high_val + prev_low_val) / 2, 2)
-        tc = round((2 * pp) - bc, 2)
+        # CPR formulas (High precision calculations first)
+        pp_raw = (prev_high_val + prev_low_val + prev_close_val) / 3
+        bc_raw = (prev_high_val + prev_low_val) / 2
+        tc_raw = (2 * pp_raw) - bc_raw
+
+        # Swap so TC is always the higher boundary based on high precision values
+        if tc_raw < bc_raw:
+            tc_raw, bc_raw = bc_raw, tc_raw
+
+        # Round key CPR values to 2 decimal places to match Zerodha/ChartIQ
+        pp = round(pp_raw, 2)
+        bc = round(bc_raw, 2)
+        tc = round(tc_raw, 2)
+
         width = abs(tc - bc)
 
-        # Support/Resistance levels
+        # Support/Resistance levels using range-based calculations matching Zerodha/ChartIQ
         r1 = round(2 * pp - prev_low_val, 2)
-        r2 = round(pp + (prev_high_val - prev_low_val), 2)
-        r3 = round(pp + 2 * (prev_high_val - prev_low_val), 2)
         s1 = round(2 * pp - prev_high_val, 2)
+        r2 = round(pp + (prev_high_val - prev_low_val), 2)
         s2 = round(pp - (prev_high_val - prev_low_val), 2)
+        r3 = round(pp + 2 * (prev_high_val - prev_low_val), 2)
         s3 = round(pp - 2 * (prev_high_val - prev_low_val), 2)
 
-        # ATR for this date
-        atr_val = atr_by_date.get(bar_date, 0)
-        # If no ATR for today, try previous day
-        if atr_val == 0:
-            prev_dates = sorted([d for d in atr_by_date.keys() if d < bar_date])
-            if prev_dates:
-                atr_val = atr_by_date[prev_dates[-1]]
-
+        # ATR from daily data (use prev day's ATR for current day's CPR)
+        atr_val = daily_ohlc.get(prev_d, {}).get('atr', 0)
         atr_ratio = width / atr_val if atr_val > 0 else 0
+
+        # Current day mask
+        curr_mask = dates == d
 
         # Classification
         if atr_ratio < 0.15:
@@ -1084,24 +1152,24 @@ def calculate_cpr(df, ref_df=None, daily_df=None):
         else:
             cpr_class = "VERY WIDE"
 
-        cpr_pp.iloc[i] = pp
-        cpr_bc.iloc[i] = bc
-        cpr_tc.iloc[i] = tc
-        cpr_width.iloc[i] = round(width, 2)
-        cpr_atr.iloc[i] = round(atr_val, 2)
-        cpr_atr_ratio.iloc[i] = round(atr_ratio, 3)
-        cpr_type.iloc[i] = cpr_class
-        cpr_r1.iloc[i] = r1
-        cpr_r2.iloc[i] = r2
-        cpr_r3.iloc[i] = r3
-        cpr_s1.iloc[i] = s1
-        cpr_s2.iloc[i] = s2
-        cpr_s3.iloc[i] = s3
-        prev_open.iloc[i] = round(prev_open_val, 2)
-        prev_high.iloc[i] = round(prev_high_val, 2)
-        prev_low.iloc[i] = round(prev_low_val, 2)
-        prev_close.iloc[i] = round(prev_close_val, 2)
-        prev_volume.iloc[i] = prev_vol_val
+        cpr_pp[curr_mask] = round(pp, 2)
+        cpr_bc[curr_mask] = round(bc, 2)
+        cpr_tc[curr_mask] = round(tc, 2)
+        cpr_width[curr_mask] = round(width, 2)
+        cpr_atr[curr_mask] = round(atr_val, 2)
+        cpr_atr_ratio[curr_mask] = round(atr_ratio, 3)
+        cpr_type[curr_mask] = cpr_class
+        cpr_r1[curr_mask] = round(r1, 2)
+        cpr_r2[curr_mask] = round(r2, 2)
+        cpr_r3[curr_mask] = round(r3, 2)
+        cpr_s1[curr_mask] = round(s1, 2)
+        cpr_s2[curr_mask] = round(s2, 2)
+        cpr_s3[curr_mask] = round(s3, 2)
+        prev_open[curr_mask] = round(daily_ohlc[prev_d]['open'], 2)
+        prev_high[curr_mask] = round(prev_high_val, 2)
+        prev_low[curr_mask] = round(prev_low_val, 2)
+        prev_close[curr_mask] = round(prev_close_val, 2)
+        prev_volume[curr_mask] = daily_ohlc[prev_d].get('volume', 0)
 
     return pd.DataFrame({
         'CPR_PP': cpr_pp, 'CPR_BC': cpr_bc, 'CPR_TC': cpr_tc,

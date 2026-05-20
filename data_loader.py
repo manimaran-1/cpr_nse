@@ -10,10 +10,11 @@ import pickle
 import threading
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import json
 import urllib.request
 import urllib.error
+import zipfile
 import yfinance as yf
 
 # Configuration for logging
@@ -34,11 +35,12 @@ SYMBOL_ALIASES = {
 # ============================================================
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 OHLCV_CACHE_DIR = os.path.join(CACHE_DIR, "ohlcv")
+BHAVCOPY_CACHE_DIR = os.path.join(CACHE_DIR, "bhavcopy")
 CACHE_EXPIRY_HOURS = 24
 OHLCV_CACHE_MINUTES = 5  # OHLCV data cached for 5 min during market hours
 
 # Ensure cache dirs exist at import time
-for _d in [CACHE_DIR, OHLCV_CACHE_DIR]:
+for _d in [CACHE_DIR, OHLCV_CACHE_DIR, BHAVCOPY_CACHE_DIR]:
     os.makedirs(_d, exist_ok=True)
 
 
@@ -612,3 +614,104 @@ def clear_ohlcv_cache():
                 pass
     logger.info(f"Cleared {count} OHLCV cache files")
     return count
+
+
+# Module level cache for preloaded Bhavcopy lookup dictionaries to avoid redundant disk read/writes
+_bhavcopy_memory_cache = {}
+
+def load_bhavcopy_lookup(date_val):
+    """
+    Downloads and caches the official NSE Bhavcopy for the specified date,
+    then returns a fast dictionary lookup: Ticker -> details.
+    
+    Returns:
+        dict: Ticker symbol (str) -> dict of OHLCV + ltp, or None if failed.
+    """
+    global _bhavcopy_memory_cache
+    
+    # Normalize to datetime.date
+    if isinstance(date_val, datetime):
+        d_key = date_val.date()
+    elif hasattr(date_val, 'date'):
+        d_key = date_val.date()
+    else:
+        d_key = date_val
+
+    if d_key in _bhavcopy_memory_cache:
+        logger.debug(f"Bhavcopy memory cache hit for {d_key}")
+        return _bhavcopy_memory_cache[d_key]
+
+    dt_str = d_key.strftime("%Y%m%d")
+    cache_path = os.path.join(BHAVCOPY_CACHE_DIR, f"BhavCopy_NSE_CM_0_0_0_{dt_str}_F_0000.csv.zip")
+
+    # 1. Check if ZIP already exists in local cache
+    if os.path.exists(cache_path):
+        logger.info(f"Using cached Bhavcopy for {d_key}")
+        try:
+            lookup = _parse_bhavcopy_zip(cache_path)
+            if lookup:
+                _bhavcopy_memory_cache[d_key] = lookup
+                return lookup
+        except Exception as e:
+            logger.warning(f"Failed parsing cached Bhavcopy for {d_key}: {e}. Retrying download.")
+
+    # 2. Download from NSE archives
+    url = f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{dt_str}_F_0000.csv.zip"
+    logger.info(f"Downloading Bhavcopy from exchange for {d_key}...")
+    
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+        })
+        with urllib.request.urlopen(req, timeout=12) as response:
+            zip_data = response.read()
+            
+        # Write to disk cache
+        with open(cache_path, "wb") as f:
+            f.write(zip_data)
+            
+        lookup = _parse_bhavcopy_zip(cache_path)
+        if lookup:
+            _bhavcopy_memory_cache[d_key] = lookup
+            return lookup
+            
+    except Exception as e:
+        logger.warning(f"Bhavcopy download/parse failed for {d_key}: {e}")
+        
+    return None
+
+def _parse_bhavcopy_zip(zip_path):
+    """Parses downloaded Bhavcopy ZIP file into a standard lookup dictionary."""
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            files = z.namelist()
+            with z.open(files[0]) as f:
+                df = pd.read_csv(f)
+        
+        # Strip whitespaces from column names
+        df.columns = [c.strip() for c in df.columns]
+        
+        # Verify required columns exist (clean column mapping)
+        required_cols = ['TckrSymb', 'OpnPric', 'HghPric', 'LwPric', 'ClsPric', 'LastPric', 'TtlTradgVol']
+        for col in required_cols:
+            if col not in df.columns:
+                logger.error(f"Required Bhavcopy column {col} missing! Found: {df.columns.tolist()[:10]}")
+                return None
+                
+        # Build dictionary lookup
+        lookup = {}
+        for _, row in df.iterrows():
+            sym = str(row['TckrSymb']).strip()
+            lookup[sym] = {
+                'open': float(row['OpnPric']),
+                'high': float(row['HghPric']),
+                'low': float(row['LwPric']),
+                'close': float(row['ClsPric']),
+                'ltp': float(row['LastPric']),
+                'volume': int(row['TtlTradgVol']),
+            }
+        return lookup
+    except Exception as e:
+        logger.error(f"Error parsing Bhavcopy ZIP: {e}")
+        return None

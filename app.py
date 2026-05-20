@@ -43,7 +43,10 @@ if "password_correct" not in st.session_state:
 
 # --- AUTHENTICATION ---
 def check_password():
-    password = st.secrets.get("password")
+    try:
+        password = st.secrets.get("password")
+    except Exception:
+        password = None
     if password:
         if st.session_state.password_correct:
             return True
@@ -89,15 +92,29 @@ data_source_options = ["yflib", "yfapi"]
 selected_data_source = st.sidebar.selectbox("Data Fetch Method", data_source_options, index=0)
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("🎯 CPR Close Baseline")
+cpr_method_options = [
+    "Intraday Candle Close",
+    "Official Exchange LTP (Bhavcopy)",
+    "Without Correction (Standard EOD Close)"
+]
+selected_cpr_method = st.sidebar.selectbox("Calculation Baseline Close", cpr_method_options, index=0)
+
+st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Filter")
 filter_options = ["All Stocks", "Narrow CPR (ATR<0.50)", "Wide CPR (ATR>1.00)", "Above TC (Bullish)", "Below BC (Bearish)", "Inside CPR (Neutral)"]
 signal_filter = st.sidebar.selectbox("Show", filter_options, index=0)
 
+if "cpr_method" not in st.session_state.scan_metadata:
+    st.session_state.scan_metadata["cpr_method"] = selected_cpr_method
+
 if (selected_universe != st.session_state.scan_metadata["universe"] or
-    selected_timeframe != st.session_state.scan_metadata["timeframe"]):
+    selected_timeframe != st.session_state.scan_metadata["timeframe"] or
+    selected_cpr_method != st.session_state.scan_metadata.get("cpr_method")):
     st.session_state.results_df = None
     st.session_state.scan_metadata["universe"] = selected_universe
     st.session_state.scan_metadata["timeframe"] = selected_timeframe
+    st.session_state.scan_metadata["cpr_method"] = selected_cpr_method
 
 st.sidebar.markdown("---")
 
@@ -150,7 +167,12 @@ if st.button("🚀 Start Market Scan", width="stretch"):
         with st.spinner(f"Scanning {len(symbols)} stocks on {selected_timeframe} timeframe..."):
             import time
             t0 = time.time()
-            results_df = scanner.scan_market(symbols, interval=selected_timeframe, progress_callback=update_progress)
+            results_df = scanner.scan_market(
+                symbols,
+                interval=selected_timeframe,
+                progress_callback=update_progress,
+                close_method=selected_cpr_method
+            )
             elapsed = time.time() - t0
 
             scan_placeholder.empty()
@@ -169,6 +191,16 @@ if st.button("🚀 Start Market Scan", width="stretch"):
             else:
                 st.session_state.results_df = "EMPTY"
                 st.toast(f"✅ {elapsed:.1f}s | No data found", icon="ℹ️")
+
+            # Check if fallback was triggered from log output
+            fallback_triggered = False
+            for log in log_lines:
+                if "Bhavcopy lookup not resolved" in log or "Bhavcopy download/parse failed" in log:
+                    fallback_triggered = True
+                    break
+            
+            if fallback_triggered:
+                st.toast("⚠️ Bhavcopy missing/failed. Automatically fell back to continuous Intraday Candle Close.", icon="⚠️")
 
         st.session_state.scan_logs = list(log_lines)
         log_lines.clear()
@@ -292,10 +324,10 @@ if st.session_state.results_df is not None:
                     "CPR_Type": st.column_config.TextColumn("CPR Type", help="ATR-Normalized classification"),
                     "CPR_R1": st.column_config.NumberColumn("R1", format="%.2f", help="Resistance 1 = 2*PP - Low"),
                     "CPR_R2": st.column_config.NumberColumn("R2", format="%.2f", help="Resistance 2 = PP + (High - Low)"),
-                    "CPR_R3": st.column_config.NumberColumn("R3", format="%.2f", help="Resistance 3 = PP + 2*(High - Low)"),
+                    "CPR_R3": st.column_config.NumberColumn("R3", format="%.2f", help="Resistance 3 = H + 2*(PP - Low)"),
                     "CPR_S1": st.column_config.NumberColumn("S1", format="%.2f", help="Support 1 = 2*PP - High"),
                     "CPR_S2": st.column_config.NumberColumn("S2", format="%.2f", help="Support 2 = PP - (High - Low)"),
-                    "CPR_S3": st.column_config.NumberColumn("S3", format="%.2f", help="Support 3 = PP - 2*(High - Low)"),
+                    "CPR_S3": st.column_config.NumberColumn("S3", format="%.2f", help="Support 3 = L - 2*(H - PP)"),
                 },
                 hide_index=True,
                 width="stretch"
@@ -438,10 +470,10 @@ with st.expander("🔴🟢 Support & Resistance Levels — R1, R2, R3, S1, S2, S
     |-------|---------|-------------|
     | **R1** | 2 × PP − L | First resistance — breakout target |
     | **R2** | PP + (H − L) | Second resistance — strong target |
-    | **R3** | PP + 2 × (H − L) | Third resistance — extended target |
+    | **R3** | H + 2 × (PP − L) | Third resistance — extended target |
     | **S1** | 2 × PP − H | First support — pullback target |
     | **S2** | PP − (H − L) | Second support — strong support |
-    | **S3** | PP − 2 × (H − L) | Third support — extended support |
+    | **S3** | L − 2 × (H − PP) | Third support — extended support |
 
     **Trading Use:**
     - Price above **R1** → strong bullish momentum, target **R2**
