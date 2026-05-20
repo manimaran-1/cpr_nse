@@ -256,7 +256,8 @@ if st.session_state.results_df is not None:
                 return ""
 
             display_cols = ['Stock Name', 'Open', 'High', 'Low', 'Close', 'CPR_Position', 'Signal Time', 'Volume',
-                           'CPR_PP', 'CPR_BC', 'CPR_TC', 'CPR_Width', 'CPR_ATR', 'CPR_ATR_Ratio', 'CPR_Type']
+                           'CPR_PP', 'CPR_BC', 'CPR_TC', 'CPR_Width', 'CPR_ATR', 'CPR_ATR_Ratio', 'CPR_Type',
+                           'CPR_R1', 'CPR_R2', 'CPR_R3', 'CPR_S1', 'CPR_S2', 'CPR_S3']
             display_cols = [c for c in display_cols if c in show_df.columns]
             other_cols = [c for c in show_df.columns if c not in display_cols]
             ordered_cols = display_cols + other_cols
@@ -283,6 +284,12 @@ if st.session_state.results_df is not None:
                     "CPR_ATR": st.column_config.NumberColumn("ATR(14)", format="%.2f", help="Average True Range (14 periods)"),
                     "CPR_ATR_Ratio": st.column_config.NumberColumn("ATR Ratio", format="%.3f", help="CPR Width / ATR(14). <0.30=Narrow, 0.30-1.00=Normal, >1.00=Wide"),
                     "CPR_Type": st.column_config.TextColumn("CPR Type", help="ATR-Normalized classification"),
+                    "CPR_R1": st.column_config.NumberColumn("R1", format="%.2f", help="Resistance 1 = 2*PP - Low"),
+                    "CPR_R2": st.column_config.NumberColumn("R2", format="%.2f", help="Resistance 2 = PP + (High - Low)"),
+                    "CPR_R3": st.column_config.NumberColumn("R3", format="%.2f", help="Resistance 3 = PP + 2*(High - Low)"),
+                    "CPR_S1": st.column_config.NumberColumn("S1", format="%.2f", help="Support 1 = 2*PP - High"),
+                    "CPR_S2": st.column_config.NumberColumn("S2", format="%.2f", help="Support 2 = PP - (High - Low)"),
+                    "CPR_S3": st.column_config.NumberColumn("S3", format="%.2f", help="Support 3 = PP - 2*(High - Low)"),
                 },
                 hide_index=True,
                 width="stretch"
@@ -300,15 +307,27 @@ col_cpr1, col_cpr2 = st.columns([2, 1])
 
 with col_cpr1:
     st.markdown("""
-    **CPR** is calculated from the **previous day's High, Low, and Close**.
+    **CPR** is calculated from the **previous day's High, Low, and Close** using Zerodha rounding method.
 
-    | Level | Formula | Description |
-    |-------|---------|-------------|
-    | **PP** | (H + L + C) / 3 | Central anchor |
-    | **BC** | (H + L) / 2 | Bottom Central |
-    | **TC** | 2 × PP − BC | Top Central |
-    | **Width** | abs(TC − BC) | CPR width in points |
-    | **ATR Ratio** | Width / ATR(14) | Universal metric |
+    **CPR Levels** (Zerodha method: round PP to 1 decimal, then compute TC from rounded PP):
+
+    | Level | Formula |
+    |-------|---------|
+    | **PP** | round((H + L + C) / 3, 1) |
+    | **BC** | round((H + L) / 2, 2) |
+    | **TC** | round(2 × PP − BC, 2) |
+    | **Width** | abs(TC − BC) |
+
+    **Support & Resistance Levels:**
+
+    | Level | Formula |
+    |-------|---------|
+    | **R1** | 2 × PP − L |
+    | **R2** | PP + (H − L) |
+    | **R3** | PP + 2 × (H − L) |
+    | **S1** | 2 × PP − H |
+    | **S2** | PP − (H − L) |
+    | **S3** | PP − 2 × (H − L) |
 
     **LTP vs CPR Position:**
     - **ABOVE TC** → Bullish bias, look for long setups

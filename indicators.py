@@ -965,21 +965,37 @@ def score_money_flow_breakdown(df, pos):
     }
 
 
-def calculate_cpr(df):
+def calculate_cpr(df, daily_df=None):
     """
-    Calculate Central Pivot Range (CPR) with ATR-Normalized Width.
-    Universal method that works across all price ranges (₹1 to ₹100,000+).
+    Calculate Central Pivot Range (CPR) with ATR-Normalized Width + Support/Resistance levels.
 
-    Returns DataFrame with: CPR_PP, CPR_BC, CPR_TC, CPR_Width, CPR_ATR, CPR_ATR_Ratio, CPR_Type
+    Uses DAILY OHLC for accurate CPR levels (not aggregated intraday candles).
+    If daily_df is provided, uses it for prev day OHLC. Otherwise falls back to aggregating from df.
+
+    Returns DataFrame with: CPR_PP, CPR_BC, CPR_TC, CPR_Width, CPR_ATR, CPR_ATR_Ratio, CPR_Type,
+                            CPR_R1, CPR_R2, CPR_R3, CPR_S1, CPR_S2, CPR_S3
+
+    Formulas (from previous day's H/L/C):
+        PP = (H + L + C) / 3
+        BC = (H + L) / 2
+        TC = 2 * PP - BC
+        Width = abs(TC - BC)
+        R1 = 2 * PP - L
+        R2 = PP + (H - L)
+        R3 = H + 2 * (PP - L)
+        S1 = 2 * PP - H
+        S2 = PP - (H - L)
+        S3 = L - 2 * (H - PP)
+        ATR Ratio = Width / ATR(14)
 
     ATR-Normalized Classification:
-        < 0.15  : Extreme Narrow (🔥🔥🔥 Major Breakout)
-        0.15-0.30: Very Narrow (🔥🔥 Strong Breakout)
-        0.30-0.50: Narrow (⚡ Good Breakout)
-        0.50-1.00: Normal (📊 Trend Follow)
-        1.00-1.50: Slightly Wide (📈 Cautious Trend)
-        1.50-2.00: Wide (📉 Range Trade)
-        > 2.00  : Very Wide (💤 Avoid)
+        < 0.15  : EXTREME NARROW
+        0.15-0.30: VERY NARROW
+        0.30-0.50: NARROW
+        0.50-1.00: NORMAL
+        1.00-1.50: SLIGHTLY WIDE
+        1.50-2.00: WIDE
+        > 2.00  : VERY WIDE
     """
     cpr_pp = pd.Series(np.nan, index=df.index)
     cpr_bc = pd.Series(np.nan, index=df.index)
@@ -988,41 +1004,76 @@ def calculate_cpr(df):
     cpr_atr = pd.Series(np.nan, index=df.index)
     cpr_atr_ratio = pd.Series(np.nan, index=df.index)
     cpr_type = pd.Series('', index=df.index)
+    cpr_r1 = pd.Series(np.nan, index=df.index)
+    cpr_r2 = pd.Series(np.nan, index=df.index)
+    cpr_r3 = pd.Series(np.nan, index=df.index)
+    cpr_s1 = pd.Series(np.nan, index=df.index)
+    cpr_s2 = pd.Series(np.nan, index=df.index)
+    cpr_s3 = pd.Series(np.nan, index=df.index)
 
     # Calculate ATR(14) for the entire series
     atr_series = calculate_atr(df, length=14)
 
-    # Group by date to get daily OHLC from intraday data
+    # Get daily OHLC — prefer daily_df (accurate) over aggregating intraday
     dates = df.index.date
     unique_dates = sorted(set(dates))
+
+    # Build daily OHLC lookup
+    daily_ohlc = {}
+    if daily_df is not None and not daily_df.empty:
+        for dt in daily_df.index:
+            d = dt.date() if hasattr(dt, 'date') else dt
+            daily_ohlc[d] = {
+                'high': float(daily_df.loc[dt, 'high']),
+                'low': float(daily_df.loc[dt, 'low']),
+                'close': float(daily_df.loc[dt, 'close']),
+            }
+    else:
+        # Fallback: aggregate from intraday
+        for d in unique_dates:
+            mask = dates == d
+            day_data = df[mask]
+            if not day_data.empty:
+                daily_ohlc[d] = {
+                    'high': float(day_data['high'].max()),
+                    'low': float(day_data['low'].min()),
+                    'close': float(day_data['close'].iloc[-1]),
+                }
 
     for i, d in enumerate(unique_dates):
         if i == 0:
             continue  # No previous day for first day
+
         prev_d = unique_dates[i - 1]
-        prev_mask = dates == prev_d
-        prev_data = df[prev_mask]
-        if prev_data.empty:
+        if prev_d not in daily_ohlc:
             continue
 
-        prev_high = prev_data['high'].max()
-        prev_low = prev_data['low'].min()
-        prev_close = prev_data['close'].iloc[-1]
+        prev = daily_ohlc[prev_d]
+        prev_high = prev['high']
+        prev_low = prev['low']
+        prev_close = prev['close']
 
-        pp = (prev_high + prev_low + prev_close) / 3
-        bc = (prev_high + prev_low) / 2
-        tc = 2 * pp - bc
+        # CPR formulas (Zerodha method: round PP to 1 decimal first, then compute TC from rounded PP)
+        pp = round((prev_high + prev_low + prev_close) / 3, 1)
+        bc = round((prev_high + prev_low) / 2, 2)
+        tc = round((2 * pp) - bc, 2)
         width = abs(tc - bc)
 
-        # Get ATR value for current day (use last value of the day)
+        # Support/Resistance levels (using Zerodha-rounded PP)
+        r1 = round(2 * pp - prev_low, 2)
+        r2 = round(pp + (prev_high - prev_low), 2)
+        r3 = round(pp + 2 * (prev_high - prev_low), 2)
+        s1 = round(2 * pp - prev_high, 2)
+        s2 = round(pp - (prev_high - prev_low), 2)
+        s3 = round(pp - 2 * (prev_high - prev_low), 2)
+
+        # ATR for current day
         curr_mask = dates == d
         curr_atr = atr_series[curr_mask]
         atr_val = curr_atr.iloc[-1] if not curr_atr.empty and not pd.isna(curr_atr.iloc[-1]) else 0
-
-        # ATR-Normalized Width (universal metric)
         atr_ratio = width / atr_val if atr_val > 0 else 0
 
-        # Classification based on ATR Ratio
+        # Classification
         if atr_ratio < 0.15:
             cpr_class = "EXTREME NARROW"
         elif atr_ratio < 0.30:
@@ -1045,13 +1096,17 @@ def calculate_cpr(df):
         cpr_atr[curr_mask] = round(atr_val, 2)
         cpr_atr_ratio[curr_mask] = round(atr_ratio, 3)
         cpr_type[curr_mask] = cpr_class
+        cpr_r1[curr_mask] = round(r1, 2)
+        cpr_r2[curr_mask] = round(r2, 2)
+        cpr_r3[curr_mask] = round(r3, 2)
+        cpr_s1[curr_mask] = round(s1, 2)
+        cpr_s2[curr_mask] = round(s2, 2)
+        cpr_s3[curr_mask] = round(s3, 2)
 
     return pd.DataFrame({
-        'CPR_PP': cpr_pp,
-        'CPR_BC': cpr_bc,
-        'CPR_TC': cpr_tc,
-        'CPR_Width': cpr_width,
-        'CPR_ATR': cpr_atr,
-        'CPR_ATR_Ratio': cpr_atr_ratio,
-        'CPR_Type': cpr_type,
+        'CPR_PP': cpr_pp, 'CPR_BC': cpr_bc, 'CPR_TC': cpr_tc,
+        'CPR_Width': cpr_width, 'CPR_ATR': cpr_atr,
+        'CPR_ATR_Ratio': cpr_atr_ratio, 'CPR_Type': cpr_type,
+        'CPR_R1': cpr_r1, 'CPR_R2': cpr_r2, 'CPR_R3': cpr_r3,
+        'CPR_S1': cpr_s1, 'CPR_S2': cpr_s2, 'CPR_S3': cpr_s3,
     }, index=df.index)

@@ -10,12 +10,12 @@ logger = logging.getLogger(__name__)
 IST = pytz.timezone('Asia/Kolkata')
 
 
-def check_conditions(df, symbol):
+def check_conditions(df, symbol, daily_df=None):
     """
-    CPR-only scanner — computes ATR-Normalized CPR levels.
-    Returns one row per stock (latest bar).
+    CPR-only scanner — computes ATR-Normalized CPR levels + S/R.
+    Returns all candles from the last trading day.
+    daily_df: daily OHLC data for accurate CPR calculation (avoids hourly aggregation mismatch)
     """
-    # CPR needs: 2 days of data (prev day for CPR levels) + 14 bars for ATR(14)
     if df.empty or len(df) < 20:
         return []
 
@@ -25,8 +25,8 @@ def check_conditions(df, symbol):
     close = df['close']
     volume = df['volume']
 
-    # CPR (Central Pivot Range) with ATR normalization
-    cpr_df = indicators.calculate_cpr(df)
+    # CPR (Central Pivot Range) with ATR normalization — use daily OHLC for accuracy
+    cpr_df = indicators.calculate_cpr(df, daily_df=daily_df)
 
     # Get all bars from the last date
     last_date = df.index[-1].date()
@@ -77,6 +77,12 @@ def check_conditions(df, symbol):
                 'CPR_ATR': cpr_df['CPR_ATR'].iloc[pos] if not pd.isna(cpr_df['CPR_ATR'].iloc[pos]) else '',
                 'CPR_ATR_Ratio': cpr_df['CPR_ATR_Ratio'].iloc[pos] if not pd.isna(cpr_df['CPR_ATR_Ratio'].iloc[pos]) else '',
                 'CPR_Type': cpr_type,
+                'CPR_R1': cpr_df['CPR_R1'].iloc[pos] if not pd.isna(cpr_df['CPR_R1'].iloc[pos]) else '',
+                'CPR_R2': cpr_df['CPR_R2'].iloc[pos] if not pd.isna(cpr_df['CPR_R2'].iloc[pos]) else '',
+                'CPR_R3': cpr_df['CPR_R3'].iloc[pos] if not pd.isna(cpr_df['CPR_R3'].iloc[pos]) else '',
+                'CPR_S1': cpr_df['CPR_S1'].iloc[pos] if not pd.isna(cpr_df['CPR_S1'].iloc[pos]) else '',
+                'CPR_S2': cpr_df['CPR_S2'].iloc[pos] if not pd.isna(cpr_df['CPR_S2'].iloc[pos]) else '',
+                'CPR_S3': cpr_df['CPR_S3'].iloc[pos] if not pd.isna(cpr_df['CPR_S3'].iloc[pos]) else '',
             }
 
             results.append(result)
@@ -91,6 +97,7 @@ def check_conditions(df, symbol):
 def scan_market(symbols, interval='1d', progress_callback=None):
     """
     CPR Scanner — fetches data and computes ATR-Normalized CPR for all stocks.
+    Fetches daily OHLC separately for accurate CPR levels.
     """
     import time as _time
     t0 = _time.time()
@@ -98,11 +105,19 @@ def scan_market(symbols, interval='1d', progress_callback=None):
     total = len(symbols)
 
     # === PHASE 1: BATCH DATA PREFETCH ===
-    logger.info(f"Phase 1: Pre-fetching {total} symbols...")
+    logger.info(f"Phase 1: Pre-fetching {total} symbols ({interval})...")
     t1 = _time.time()
     data_cache = data_loader.fetch_data_batch(symbols, interval=interval, max_workers=4)
     t2 = _time.time()
     logger.info(f"Phase 1 complete: {len(data_cache)}/{total} symbols in {t2-t1:.1f}s")
+
+    # Fetch daily OHLC for accurate CPR (only if using intraday timeframe)
+    daily_cache = {}
+    if interval in ['1h', '15m', '5m', '1m', '30m']:
+        logger.info(f"Phase 1b: Fetching daily OHLC for accurate CPR...")
+        t1b = _time.time()
+        daily_cache = data_loader.fetch_data_batch(symbols, interval='1d', max_workers=4)
+        logger.info(f"Phase 1b complete: {len(daily_cache)}/{total} daily in {_time.time()-t1b:.1f}s")
 
     # === PHASE 2: COMPUTE CPR ===
     logger.info("Phase 2: Computing CPR...")
@@ -115,7 +130,8 @@ def scan_market(symbols, interval='1d', progress_callback=None):
                 completed_count += 1
                 continue
 
-            results = check_conditions(df, sym)
+            daily_df = daily_cache.get(sym) if daily_cache else None
+            results = check_conditions(df, sym, daily_df=daily_df)
             if results:
                 all_results.extend(results)
             completed_count += 1
