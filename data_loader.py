@@ -772,29 +772,3 @@ def _parse_bhavcopy_zip(zip_path):
     except Exception as e:
         logger.error(f"Error parsing Bhavcopy ZIP: {e}")
         return None
-
-
-def get_recent_trading_dates(limit=10):
-    """
-    Fetches daily data for a benchmark symbol (e.g. NSE:RELIANCE-EQ)
-    to get a list of the most recent actual trading dates.
-    Returns a list of datetime.date objects, sorted descending (latest first).
-    """
-    try:
-        df = fetch_data("NSE:RELIANCE-EQ", interval='1d')
-        if not df.empty:
-            # Drop timezone information for clean date comparisons
-            dates = sorted(list(set(df.index.date)), reverse=True)
-            return dates[:limit]
-    except Exception as e:
-        logger.error(f"Error fetching recent trading dates: {e}")
-    
-    # Resilient weekday fallback if offline or yfinance fails
-    fallback_dates = []
-    curr = datetime.now(IST).date()
-    while len(fallback_dates) < limit:
-        if curr.weekday() < 5:  # Monday to Friday
-            fallback_dates.append(curr)
-        curr -= timedelta(days=1)
-    return fallback_dates
-

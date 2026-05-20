@@ -10,12 +10,10 @@ logger = logging.getLogger(__name__)
 IST = pytz.timezone('Asia/Kolkata')
 
 
-from datetime import date
-
-def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Close", bhavcopy_lookup=None, target_session=None, cpr_target_date=None):
+def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Close", bhavcopy_lookup=None, target_session="Current Session"):
     """
     CPR-only scanner — computes ATR-Normalized CPR levels + S/R.
-    Returns all candles from the target trading day.
+    Returns all candles from the last trading day.
     daily_df: daily OHLC data for accurate CPR calculation (avoids hourly aggregation mismatch)
     """
     if df.empty or len(df) < 20:
@@ -24,16 +22,6 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
     # Remove duplicate timestamps
     df = df[~df.index.duplicated(keep='last')]
 
-    # Resolve target mode
-    target_mode = "Latest Session"
-    if cpr_target_date is not None:
-        target_mode = cpr_target_date
-    elif target_session is not None:
-        if target_session == "Next Session":
-            target_mode = "Tomorrow"
-        else:
-            target_mode = "Latest Session"
-
     # CPR (Central Pivot Range) with ATR normalization — use daily OHLC for accuracy
     cpr_df = indicators.calculate_cpr(
         df,
@@ -41,16 +29,12 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
         symbol=symbol,
         close_method=close_method,
         bhavcopy_lookup=bhavcopy_lookup,
-        cpr_target_date=target_mode
+        target_session=target_session
     )
 
-    # Get all bars from the target date
-    if isinstance(target_mode, date):
-        target_d = target_mode
-    else:
-        target_d = df.index[-1].date()
-
-    last_day_mask = df.index.date == target_d
+    # Get all bars from the last date — vectorized
+    last_date = df.index[-1].date()
+    last_day_mask = df.index.date == last_date
     last_day_df = df[last_day_mask]
     last_day_cpr = cpr_df[last_day_mask]
 
@@ -79,8 +63,9 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
     # Build result DataFrame in one shot (no per-row Python loop)
     timestamps = last_day_df.index
 
-    def _safe_val(val):
-        return val if pd.notna(val) else None
+    def _safe(series, default=np.nan):
+        """Replace NaN with default for display columns."""
+        return series.fillna(default).values if hasattr(series, 'fillna') else series
 
     result_df = pd.DataFrame({
         'Stock Name': symbol,
@@ -91,30 +76,30 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
         'CPR_Position': cpr_position,
         'Signal Time': [t.strftime('%d-%m-%Y %H:%M') for t in timestamps],
         'Volume': last_day_df['volume'].fillna(0).astype(int).values,
-        'Prev_Open': [_safe_val(v) for v in last_day_cpr['Prev_Open']],
-        'Prev_High': [_safe_val(v) for v in last_day_cpr['Prev_High']],
-        'Prev_Low': [_safe_val(v) for v in last_day_cpr['Prev_Low']],
-        'Prev_Close': [_safe_val(v) for v in last_day_cpr['Prev_Close']],
-        'CPR_PP': [_safe_val(v) for v in last_day_cpr['CPR_PP']],
-        'CPR_BC': [_safe_val(v) for v in last_day_cpr['CPR_BC']],
-        'CPR_TC': [_safe_val(v) for v in last_day_cpr['CPR_TC']],
-        'CPR_Width': [_safe_val(v) for v in last_day_cpr['CPR_Width']],
-        'CPR_ATR': [_safe_val(v) for v in last_day_cpr['CPR_ATR']],
-        'CPR_ATR_Ratio': [_safe_val(v) for v in last_day_cpr['CPR_ATR_Ratio']],
-        'CPR_Type': [_safe_val(v) for v in last_day_cpr['CPR_Type']],
-        'CPR_R1': [_safe_val(v) for v in last_day_cpr['CPR_R1']],
-        'CPR_R2': [_safe_val(v) for v in last_day_cpr['CPR_R2']],
-        'CPR_R3': [_safe_val(v) for v in last_day_cpr['CPR_R3']],
-        'CPR_S1': [_safe_val(v) for v in last_day_cpr['CPR_S1']],
-        'CPR_S2': [_safe_val(v) for v in last_day_cpr['CPR_S2']],
-        'CPR_S3': [_safe_val(v) for v in last_day_cpr['CPR_S3']],
-        'Prev_Volume': [_safe_val(v) for v in last_day_cpr['Prev_Volume']],
+        'Prev_Open': _safe(last_day_cpr['Prev_Open']),
+        'Prev_High': _safe(last_day_cpr['Prev_High']),
+        'Prev_Low': _safe(last_day_cpr['Prev_Low']),
+        'Prev_Close': _safe(last_day_cpr['Prev_Close']),
+        'CPR_PP': _safe(last_day_cpr['CPR_PP']),
+        'CPR_BC': _safe(last_day_cpr['CPR_BC']),
+        'CPR_TC': _safe(last_day_cpr['CPR_TC']),
+        'CPR_Width': _safe(last_day_cpr['CPR_Width']),
+        'CPR_ATR': _safe(last_day_cpr['CPR_ATR']),
+        'CPR_ATR_Ratio': _safe(last_day_cpr['CPR_ATR_Ratio']),
+        'CPR_Type': _safe(last_day_cpr['CPR_Type']),
+        'CPR_R1': _safe(last_day_cpr['CPR_R1']),
+        'CPR_R2': _safe(last_day_cpr['CPR_R2']),
+        'CPR_R3': _safe(last_day_cpr['CPR_R3']),
+        'CPR_S1': _safe(last_day_cpr['CPR_S1']),
+        'CPR_S2': _safe(last_day_cpr['CPR_S2']),
+        'CPR_S3': _safe(last_day_cpr['CPR_S3']),
+        'Prev_Volume': _safe(last_day_cpr['Prev_Volume']),
     })
 
     return result_df.to_dict('records')
 
 
-def scan_market(symbols, interval='1d', progress_callback=None, close_method="Intraday Candle Close", target_session=None, cpr_target_date=None):
+def scan_market(symbols, interval='1d', progress_callback=None, close_method="Intraday Candle Close", target_session="Current Session"):
     """
     CPR Scanner — fetches data and computes ATR-Normalized CPR for all stocks.
     Fetches daily OHLC separately for accurate CPR levels.
@@ -123,16 +108,6 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
     t0 = _time.time()
     all_results = []
     total = len(symbols)
-
-    # Resolve target mode
-    target_mode = "Latest Session"
-    if cpr_target_date is not None:
-        target_mode = cpr_target_date
-    elif target_session is not None:
-        if target_session == "Next Session":
-            target_mode = "Tomorrow"
-        else:
-            target_mode = "Latest Session"
 
     # Wrapper: progress_callback(completed, total) but fetch_data_batch sends (done, total, label)
     # Map: Phase 1 → 0-40%, Phase 1b → 40-70%, Phase 2 → 70-100%
@@ -182,21 +157,13 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
         if sample_df is not None:
             unique_dates = sorted(list(set(sample_df.index.date)))
             if len(unique_dates) >= 1:
-                # If target is Next Session / Tomorrow, we want today's data (latest unique date) as the baseline for tomorrow's CPR
-                if target_mode == "Tomorrow":
+                # If target is Next Session, we want today's data (latest unique date) as the baseline for tomorrow's CPR
+                if target_session == "Next Session":
                     prev_trading_date = unique_dates[-1]
-                elif isinstance(target_mode, date):
-                    if target_mode in unique_dates:
-                        idx = unique_dates.index(target_mode)
-                        prev_trading_date = unique_dates[idx - 1] if idx > 0 else unique_dates[0]
-                    else:
-                        # Fallback: find the latest date in unique_dates that is less than target_mode
-                        less_than_dates = [d for d in unique_dates if d < target_mode]
-                        prev_trading_date = less_than_dates[-1] if less_than_dates else unique_dates[0]
                 else:
                     prev_trading_date = unique_dates[-2] if len(unique_dates) >= 2 else unique_dates[-1]
 
-                logger.info(f"Detected trading date for Bhavcopy lookup ({target_mode}): {prev_trading_date}")
+                logger.info(f"Detected trading date for Bhavcopy lookup ({target_session}): {prev_trading_date}")
                 bhavcopy_lookup = data_loader.load_bhavcopy_lookup(prev_trading_date)
                 if not bhavcopy_lookup:
                     logger.warning(f"Bhavcopy lookup not resolved for date {prev_trading_date}. Falling back to default.")
@@ -223,7 +190,7 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
                 daily_df=daily_df,
                 close_method=close_method,
                 bhavcopy_lookup=bhavcopy_lookup,
-                cpr_target_date=target_mode
+                target_session=target_session
             )
             if results:
                 all_results.extend(results)
@@ -244,11 +211,9 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
     logger.info(f"Scan complete: {len(results_df)} results from {len(data_cache) - skipped_count}/{len(data_cache)} fetched in {t_end-t0:.1f}s")
 
     if not results_df.empty:
-        # Ensure numeric columns are float (mixed types from _safe() cause sort errors)
-        for col in ['CPR_ATR_Ratio', 'CPR_ATR', 'CPR_Width', 'CPR_PP', 'CPR_BC', 'CPR_TC',
-                     'CPR_R1', 'CPR_R2', 'CPR_R3', 'CPR_S1', 'CPR_S2', 'CPR_S3',
-                     'Prev_Open', 'Prev_High', 'Prev_Low', 'Prev_Close', 'Prev_Volume']:
-            if col in results_df.columns:
-                results_df[col] = pd.to_numeric(results_df[col], errors='coerce')
-        return results_df.sort_values(by='CPR_ATR_Ratio', ascending=True)
+        return results_df.sort_values(
+            by='CPR_ATR_Ratio', ascending=True,
+            key=lambda x: pd.to_numeric(x, errors='coerce'),
+            na_position='last'
+        )
     return pd.DataFrame()

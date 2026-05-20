@@ -230,9 +230,9 @@ if st.session_state.results_df is not None:
 
         # Apply filter
         if signal_filter == "Narrow CPR (ATR<0.50)":
-            full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) < 0.50 if (pd.notna(x) and x != '') else False)]
+            full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) < 0.50 if x != '' else False)]
         elif signal_filter == "Wide CPR (ATR>1.00)":
-            full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) > 1.00 if (pd.notna(x) and x != '') else False)]
+            full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) > 1.00 if x != '' else False)]
         elif signal_filter == "Above TC (Bullish)" and 'CPR_Position' in full_df.columns:
             full_df = full_df[full_df['CPR_Position'].str.contains('ABOVE', na=False)]
         elif signal_filter == "Below BC (Bearish)" and 'CPR_Position' in full_df.columns:
