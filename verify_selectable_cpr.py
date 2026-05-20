@@ -87,13 +87,13 @@ print(f"BC: {round(manual_bc_raw, 2)}")
 
 print("\n--- DUAL SESSION VALIDATION ---")
 success = (
-    cpr_tomorrow['CPR_PP'].iloc[-1] == round(manual_pp_raw, 2) and
-    cpr_tomorrow['CPR_TC'].iloc[-1] == round(manual_tc_raw, 2) and
-    cpr_tomorrow['CPR_BC'].iloc[-1] == round(manual_bc_raw, 2)
+    cpr_today['CPR_PP'].iloc[-1] == round(manual_pp_raw, 2) and
+    cpr_today['CPR_TC'].iloc[-1] == round(manual_tc_raw, 2) and
+    cpr_today['CPR_BC'].iloc[-1] == round(manual_bc_raw, 2)
 )
 if success:
-    print("SUCCESS: Tomorrow's CPR correctly uses Today's completed OHLC as its baseline!")
+    print("SUCCESS: Today's CPR correctly uses Yesterday's completed OHLC as its baseline and matches manual calculation!")
 else:
-    print("FAILURE: Tomorrow's CPR calculations do not match today's OHLC baseline.")
+    print("FAILURE: CPR calculations do not match manual calculations.")
 
 print("\n=== VERIFICATION RUN COMPLETE ===")

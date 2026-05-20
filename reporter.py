@@ -76,11 +76,110 @@ def _format_stock_line(row, score_field, score_max, show_entry=False):
     return line
 
 
+def generate_cpr_report(df, universe, timeframe):
+    """
+    Generates a beautifully formatted text report specifically for Central Pivot Range (CPR) scans.
+    """
+    if df.empty:
+        return [(
+            f"ℹ️ *NSE CPR Market Scan Update*\n\n"
+            f"📊 *Universe:* {universe}\n"
+            f"⏰ *Timeframe:* {timeframe}\n"
+            f"⚠️ No matches found.\n"
+            f"📅 {datetime.now(IST).strftime('%d-%m-%Y %H:%M:%S')} IST"
+        )]
+
+    # Deduplicate — keep the latest candle per stock
+    df_work = df.copy()
+    if 'Signal Time' in df_work.columns:
+        df_work = df_work.sort_values('Signal Time', ascending=False)
+    unique_df = df_work.drop_duplicates(subset='Stock Name')
+
+    total_found = len(unique_df)
+    now_ist = datetime.now(IST).strftime('%d-%m-%Y %H:%M:%S')
+
+    # Analyze positions
+    above_tc = unique_df[unique_df['CPR_Position'].str.contains('ABOVE', na=False)]
+    below_bc = unique_df[unique_df['CPR_Position'].str.contains('BELOW', na=False)]
+    inside_cpr = unique_df[unique_df['CPR_Position'].str.contains('INSIDE', na=False)]
+
+    # Determine market mood based on CPR positions
+    pct_bullish = len(above_tc) / total_found if total_found > 0 else 0.5
+    if pct_bullish > 0.6:
+        mood = "🔥 STRONG BULLISH (Dominant stocks above CPR)"
+    elif pct_bullish > 0.45:
+        mood = "✅ BULLISH (Healthy buying above CPR)"
+    elif pct_bullish < 0.35:
+        mood = "🔴 BEARISH (Selling pressure below CPR)"
+    else:
+        mood = "⚖️ NEUTRAL (CPR range bound market)"
+
+    p1_lines = [
+        f"🚀 *NSE CPR Market Analysis* | 📊 *{universe}*",
+        f"----------------------------------------",
+        f"🏁 *MOOD:* _{mood}_",
+        f"✅ *Signals:* {total_found} | *TF:* {timeframe} | _{now_ist}_",
+        f"📈 *Above TC:* {len(above_tc)} | *Below BC:* {len(below_bc)} | *Inside:* {len(inside_cpr)}",
+        f"----------------------------------------",
+    ]
+
+    # 🎯 EXTREME/VERY NARROW CPR SIGNALS — highest priority for breakout plays!
+    narrow_df = unique_df[unique_df['CPR_Type'].isin(['EXTREME NARROW', 'VERY NARROW', 'NARROW'])]
+    if not narrow_df.empty:
+        if 'CPR_ATR_Ratio' in narrow_df.columns:
+            narrow_df = narrow_df.nsmallest(10, 'CPR_ATR_Ratio')
+        else:
+            narrow_df = narrow_df.head(10)
+        p1_lines.append(f"🌀 *NARROW CPR SIGNALS — Breakout Watch*")
+        p1_lines.append(f"_High probability of trending moves today_")
+        for _, row in narrow_df.iterrows():
+            name = row['Stock Name']
+            close_val = row.get('Close') or row.get('LTP') or 0
+            c_type = row.get('CPR_Type', 'NARROW')
+            ratio = row.get('CPR_ATR_Ratio', 0)
+            pos = row.get('CPR_Position', '')
+            pos_short = "🟢" if "ABOVE" in pos else "🔴" if "BELOW" in pos else "⚖️"
+            p1_lines.append(f"👉 *{name}* ₹{close_val:.2f} | {pos_short} {c_type} (Ratio:{ratio:.2f})")
+        p1_lines.append(f"----------------------------------------")
+
+    # 🔥 BULLISH BREAKOUTS (ABOVE TC)
+    if not above_tc.empty:
+        p1_lines.append(f"🔥 *BULLISH CPR SIGNALS — Above TC*")
+        for _, row in above_tc.head(10).iterrows():
+            name = row['Stock Name']
+            close_val = row.get('Close') or row.get('LTP') or 0
+            c_type = row.get('CPR_Type', 'NORMAL')
+            ratio = row.get('CPR_ATR_Ratio', 0)
+            p1_lines.append(f"👉 *{name}* ₹{close_val:.2f} | {c_type} (Ratio:{ratio:.2f})")
+        p1_lines.append(f"----------------------------------------")
+
+    # 🔴 BEARISH BREAKOUTS (BELOW BC)
+    p2_lines = []
+    if not below_bc.empty:
+        p2_lines.append(f"🔴 *BEARISH CPR SIGNALS — Below BC*")
+        for _, row in below_bc.head(10).iterrows():
+            name = row['Stock Name']
+            close_val = row.get('Close') or row.get('LTP') or 0
+            c_type = row.get('CPR_Type', 'NORMAL')
+            ratio = row.get('CPR_ATR_Ratio', 0)
+            p2_lines.append(f"👉 *{name}* ₹{close_val:.2f} | {c_type} (Ratio:{ratio:.2f})")
+        p2_lines.append(f"----------------------------------------")
+
+    all_chunks = []
+    all_chunks.extend(split_list_to_chunks(p1_lines, 3800))
+    if p2_lines:
+        all_chunks.extend(split_list_to_chunks(p2_lines, 3800))
+
+    return all_chunks
+
+
 def generate_report(df, universe, timeframe):
     """
     NSE Market Analyst v3.0 - 3-Score System Reporter.
     Returns: List of message strings formatted for Telegram.
     """
+    if 'ignition_score' not in df.columns:
+        return generate_cpr_report(df, universe, timeframe)
     if df.empty:
         return [(
             f"ℹ️ *NSE Market Scan Update*\n\n"

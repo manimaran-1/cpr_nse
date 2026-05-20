@@ -968,7 +968,7 @@ def score_money_flow_breakdown(df, pos):
     }
 
 
-def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle Close", bhavcopy_lookup=None, target_session="Current Session"):
+def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle Close", bhavcopy_lookup=None, cpr_target_date="Latest Session", target_session=None):
     """
     Calculate Central Pivot Range (CPR) with ATR-Normalized Width + Support/Resistance levels.
 
@@ -1000,6 +1000,14 @@ def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle 
         1.50-2.00: WIDE
         > 2.00  : VERY WIDE
     """
+    if target_session is not None:
+        if target_session == "Next Session":
+            cpr_target_date = "Tomorrow"
+        elif target_session == "Current Session":
+            cpr_target_date = "Latest Session"
+        else:
+            cpr_target_date = target_session
+
     n = len(df)
     dates = df.index.date
     unique_dates = sorted(set(dates))
@@ -1009,80 +1017,74 @@ def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle 
     for d in unique_dates:
         date_masks[d] = (dates == d)
 
-    # Pre-compute last intraday close per date (avoids df[df.index.date == d] in loop)
-    last_intraday_close = {}
-    for d in unique_dates:
-        mask = date_masks[d]
-        idx = np.where(mask)[0]
-        if len(idx) > 0:
-            last_intraday_close[d] = float(df['close'].iat[idx[-1]])
-
-    # Resolve bhavcopy symbol once
-    clean_sym = None
-    if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
-        clean_sym = (symbol or "").upper()
-        if ":" in clean_sym:
-            clean_sym = clean_sym.split(":")[1]
-        clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
-
     # Build daily OHLC lookup + ATR from daily data
     daily_ohlc = {}
     if daily_df is not None and not daily_df.empty:
         atr_series = calculate_atr(daily_df, length=14)
-        atr_vals = atr_series.values
-        for i, dt in enumerate(daily_df.index):
+        for dt in daily_df.index:
             d = dt.date() if hasattr(dt, 'date') else dt
-            row = daily_df.iloc[i]
-            atr_val = atr_vals[i] if i < len(atr_vals) else np.nan
-
+            row = daily_df.loc[dt]
+            atr_val = atr_series.loc[dt] if dt in atr_series.index else np.nan
+            
             # Resolve close price based on selected method
-            close_val = float(row['close'])
-
+            close_val = float(row['close']) # "Without Correction (Standard EOD Close)" uses yfinance daily close
+            
             if close_method == "Intraday Candle Close":
-                if d in last_intraday_close:
-                    close_val = last_intraday_close[d]
-            elif close_method == "Official Exchange LTP (Bhavcopy)" and clean_sym and clean_sym in bhavcopy_lookup:
-                close_val = bhavcopy_lookup[clean_sym]['ltp']
-            else:
-                if d in last_intraday_close:
-                    close_val = last_intraday_close[d]
-
+                day_intraday = df[df.index.date == d]
+                if not day_intraday.empty:
+                    close_val = float(day_intraday['close'].iloc[-1])
+            elif close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
+                clean_sym = symbol.upper() if symbol else ""
+                if ":" in clean_sym:
+                    clean_sym = clean_sym.split(":")[1]
+                clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                
+                if clean_sym in bhavcopy_lookup:
+                    close_val = bhavcopy_lookup[clean_sym]['ltp']
+                else:
+                    # Fallback to Intraday Candle Close if not found in Bhavcopy lookup
+                    day_intraday = df[df.index.date == d]
+                    if not day_intraday.empty:
+                        close_val = float(day_intraday['close'].iloc[-1])
+            
             daily_ohlc[d] = {
                 'high': float(row['high']),
                 'low': float(row['low']),
                 'close': close_val,
                 'open': float(row['open']),
-                'volume': int(row['volume']) if 'volume' in daily_df.columns else 0,
+                'volume': int(row['volume']) if 'volume' in row.index else 0,
                 'atr': float(atr_val) if not pd.isna(atr_val) else 0,
             }
     else:
         # Fallback: aggregate from intraday
-        close_arr = df['close'].values
-        high_arr = df['high'].values
-        low_arr = df['low'].values
-        open_arr = df['open'].values
-        vol_arr = df['volume'].values
-
+        atr_series = calculate_atr(df, length=14)
         for d in unique_dates:
             mask = date_masks[d]
-            idx = np.where(mask)[0]
-            if len(idx) == 0:
-                continue
-            close_val = float(close_arr[idx[-1]])
+            day_data = df[mask]
+            if not day_data.empty:
+                close_val = float(day_data['close'].iloc[-1])
+                
+                # Apply Bhavcopy LTP if available on the fallback path too
+                if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
+                    clean_sym = symbol.upper() if symbol else ""
+                    if ":" in clean_sym:
+                        clean_sym = clean_sym.split(":")[1]
+                    clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                    if clean_sym in bhavcopy_lookup:
+                        close_val = bhavcopy_lookup[clean_sym]['ltp']
+                elif close_method == "Without Correction (Standard EOD Close)":
+                    pass
+                    
+                daily_ohlc[d] = {
+                    'high': float(day_data['high'].max()),
+                    'low': float(day_data['low'].min()),
+                    'close': close_val,
+                    'open': float(day_data['open'].iloc[0]),
+                    'volume': int(day_data['volume'].sum()),
+                    'atr': 0,
+                }
 
-            if close_method == "Official Exchange LTP (Bhavcopy)" and clean_sym and clean_sym in bhavcopy_lookup:
-                close_val = bhavcopy_lookup[clean_sym]['ltp']
-
-            daily_ohlc[d] = {
-                'high': float(np.nanmax(high_arr[idx])),
-                'low': float(np.nanmin(low_arr[idx])),
-                'close': close_val,
-                'open': float(open_arr[idx[0]]),
-                'volume': int(np.nansum(vol_arr[idx])),
-                'atr': 0,
-            }
-
-    # Pre-allocate output arrays (falloc than pd.Series with repeated assignment)
+    # Pre-allocate output arrays
     cpr_pp = np.full(n, np.nan)
     cpr_bc = np.full(n, np.nan)
     cpr_tc = np.full(n, np.nan)
@@ -1104,7 +1106,7 @@ def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle 
     p_volume = np.full(n, np.nan)
 
     for i, d in enumerate(unique_dates):
-        if target_session == "Next Session":
+        if cpr_target_date == "Tomorrow":
             prev_d = d
         else:
             if i == 0:
@@ -1112,9 +1114,41 @@ def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle 
             prev_d = unique_dates[i - 1]
 
         if prev_d not in daily_ohlc:
-            continue
-
-        prev = daily_ohlc[prev_d]
+            # Resilient fallback: aggregate from intraday candles for prev_d
+            mask = date_masks.get(prev_d)
+            if mask is None:
+                mask = (dates == prev_d)
+            day_data = df[mask]
+            if not day_data.empty:
+                close_val = float(day_data['close'].iloc[-1])
+                if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
+                    clean_sym = symbol.upper() if symbol else ""
+                    if ":" in clean_sym:
+                        clean_sym = clean_sym.split(":")[1]
+                    clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                    if clean_sym in bhavcopy_lookup:
+                        close_val = bhavcopy_lookup[clean_sym]['ltp']
+                
+                # Fetch a nearby ATR or estimate ATR from standard daily ATR
+                atr_val = 0
+                if daily_ohlc:
+                    latest_avail_d = sorted(daily_ohlc.keys())[-1]
+                    atr_val = daily_ohlc[latest_avail_d].get('atr', 0)
+                
+                prev = {
+                    'high': float(day_data['high'].max()),
+                    'low': float(day_data['low'].min()),
+                    'close': close_val,
+                    'open': float(day_data['open'].iloc[0]),
+                    'volume': int(day_data['volume'].sum()),
+                    'atr': atr_val,
+                }
+                daily_ohlc[prev_d] = prev
+            else:
+                continue
+        else:
+            prev = daily_ohlc[prev_d]
+        
         prev_high_val = prev['high']
         prev_low_val = prev['low']
         prev_close_val = prev['close']

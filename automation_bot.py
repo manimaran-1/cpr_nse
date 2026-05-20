@@ -113,12 +113,13 @@ def run_scan():
             logger.warning(f"No symbols found for {SCAN_UNIVERSE}. Aborting scan.")
             return
 
+        display_method = "Zerodha CPR" if CLOSE_METHOD == "Official Exchange LTP (Bhavcopy)" else CLOSE_METHOD
         send_telegram_message(
-            f"🔍 *CPR Scanner 2.0 Started*\n"
+            f"🔍 *NSE Scanner 2.0 Started*\n"
             f"📊 Universe: {SCAN_UNIVERSE}\n"
             f"⏰ Timeframe: {SCAN_INTERVAL}\n"
             f"🎯 Session: {TARGET_SESSION}\n"
-            f"💰 Method: {CLOSE_METHOD}\n"
+            f"💰 Method: {display_method}\n"
             f"🔢 Symbols: {len(symbols)}"
         )
 
@@ -144,9 +145,10 @@ def run_scan():
             report_parts = reporter.generate_report(results_df, SCAN_UNIVERSE, SCAN_INTERVAL)
 
             # Send the CSV document with scan parameters in caption
+            display_method = "Zerodha CPR" if CLOSE_METHOD == "Official Exchange LTP (Bhavcopy)" else CLOSE_METHOD
             caption = (
                 f"📊 {SCAN_UNIVERSE} | {SCAN_INTERVAL}\n"
-                f"🎯 {TARGET_SESSION} | {CLOSE_METHOD}\n"
+                f"🎯 {TARGET_SESSION} | {display_method}\n"
                 f"📈 {len(results_df)} signals | {now.strftime('%d-%b-%Y %H:%M')} IST"
             )
             send_telegram_document(file_path, caption)
