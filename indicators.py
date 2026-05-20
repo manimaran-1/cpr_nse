@@ -1010,26 +1010,33 @@ def calculate_cpr(df, daily_df=None):
     cpr_s1 = pd.Series(np.nan, index=df.index)
     cpr_s2 = pd.Series(np.nan, index=df.index)
     cpr_s3 = pd.Series(np.nan, index=df.index)
+    prev_open = pd.Series(np.nan, index=df.index)
+    prev_high = pd.Series(np.nan, index=df.index)
+    prev_low = pd.Series(np.nan, index=df.index)
+    prev_close = pd.Series(np.nan, index=df.index)
 
-    # Calculate ATR(14) for the entire series
-    atr_series = calculate_atr(df, length=14)
-
-    # Get daily OHLC — prefer daily_df (accurate) over aggregating intraday
+    # Use daily_df for ATR(14) when available (matches Zerodha), else fall back to intraday
     dates = df.index.date
     unique_dates = sorted(set(dates))
 
-    # Build daily OHLC lookup
+    # Build daily OHLC lookup + ATR from daily data
     daily_ohlc = {}
     if daily_df is not None and not daily_df.empty:
+        atr_series = calculate_atr(daily_df, length=14)
         for dt in daily_df.index:
             d = dt.date() if hasattr(dt, 'date') else dt
+            row = daily_df.loc[dt]
+            atr_val = atr_series.loc[dt] if dt in atr_series.index else np.nan
             daily_ohlc[d] = {
-                'high': float(daily_df.loc[dt, 'high']),
-                'low': float(daily_df.loc[dt, 'low']),
-                'close': float(daily_df.loc[dt, 'close']),
+                'high': float(row['high']),
+                'low': float(row['low']),
+                'close': float(row['close']),
+                'open': float(row['open']),
+                'atr': float(atr_val) if not pd.isna(atr_val) else 0,
             }
     else:
         # Fallback: aggregate from intraday
+        atr_series = calculate_atr(df, length=14)
         for d in unique_dates:
             mask = dates == d
             day_data = df[mask]
@@ -1038,6 +1045,8 @@ def calculate_cpr(df, daily_df=None):
                     'high': float(day_data['high'].max()),
                     'low': float(day_data['low'].min()),
                     'close': float(day_data['close'].iloc[-1]),
+                    'open': float(day_data['open'].iloc[0]),
+                    'atr': 0,
                 }
 
     for i, d in enumerate(unique_dates):
@@ -1049,29 +1058,30 @@ def calculate_cpr(df, daily_df=None):
             continue
 
         prev = daily_ohlc[prev_d]
-        prev_high = prev['high']
-        prev_low = prev['low']
-        prev_close = prev['close']
+        prev_high_val = prev['high']
+        prev_low_val = prev['low']
+        prev_close_val = prev['close']
 
         # CPR formulas (Zerodha method: round PP to 1 decimal first, then compute TC from rounded PP)
-        pp = round((prev_high + prev_low + prev_close) / 3, 1)
-        bc = round((prev_high + prev_low) / 2, 2)
+        pp = round((prev_high_val + prev_low_val + prev_close_val) / 3, 1)
+        bc = round((prev_high_val + prev_low_val) / 2, 2)
         tc = round((2 * pp) - bc, 2)
         width = abs(tc - bc)
 
         # Support/Resistance levels (using Zerodha-rounded PP)
-        r1 = round(2 * pp - prev_low, 2)
-        r2 = round(pp + (prev_high - prev_low), 2)
-        r3 = round(pp + 2 * (prev_high - prev_low), 2)
-        s1 = round(2 * pp - prev_high, 2)
-        s2 = round(pp - (prev_high - prev_low), 2)
-        s3 = round(pp - 2 * (prev_high - prev_low), 2)
+        r1 = round(2 * pp - prev_low_val, 2)
+        r2 = round(pp + (prev_high_val - prev_low_val), 2)
+        r3 = round(pp + 2 * (prev_high_val - prev_low_val), 2)
+        s1 = round(2 * pp - prev_high_val, 2)
+        s2 = round(pp - (prev_high_val - prev_low_val), 2)
+        s3 = round(pp - 2 * (prev_high_val - prev_low_val), 2)
 
-        # ATR for current day
-        curr_mask = dates == d
-        curr_atr = atr_series[curr_mask]
-        atr_val = curr_atr.iloc[-1] if not curr_atr.empty and not pd.isna(curr_atr.iloc[-1]) else 0
+        # ATR from daily data (use prev day's ATR for current day's CPR)
+        atr_val = daily_ohlc.get(prev_d, {}).get('atr', 0)
         atr_ratio = width / atr_val if atr_val > 0 else 0
+
+        # Current day mask
+        curr_mask = dates == d
 
         # Classification
         if atr_ratio < 0.15:
@@ -1102,6 +1112,10 @@ def calculate_cpr(df, daily_df=None):
         cpr_s1[curr_mask] = round(s1, 2)
         cpr_s2[curr_mask] = round(s2, 2)
         cpr_s3[curr_mask] = round(s3, 2)
+        prev_open[curr_mask] = round(daily_ohlc[prev_d]['open'], 2)
+        prev_high[curr_mask] = round(prev_high_val, 2)
+        prev_low[curr_mask] = round(prev_low_val, 2)
+        prev_close[curr_mask] = round(prev_close_val, 2)
 
     return pd.DataFrame({
         'CPR_PP': cpr_pp, 'CPR_BC': cpr_bc, 'CPR_TC': cpr_tc,
@@ -1109,4 +1123,6 @@ def calculate_cpr(df, daily_df=None):
         'CPR_ATR_Ratio': cpr_atr_ratio, 'CPR_Type': cpr_type,
         'CPR_R1': cpr_r1, 'CPR_R2': cpr_r2, 'CPR_R3': cpr_r3,
         'CPR_S1': cpr_s1, 'CPR_S2': cpr_s2, 'CPR_S3': cpr_s3,
+        'Prev_Open': prev_open, 'Prev_High': prev_high,
+        'Prev_Low': prev_low, 'Prev_Close': prev_close,
     }, index=df.index)
