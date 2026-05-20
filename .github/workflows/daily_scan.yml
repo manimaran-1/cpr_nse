@@ -1,0 +1,57 @@
+name: Daily CPR Scanner
+
+on:
+  workflow_dispatch:
+    inputs:
+      universe:
+        description: 'Stock universe'
+        required: false
+        default: 'Total Cash Segment'
+        type: choice
+        options:
+          - Total Cash Segment
+          - Nifty 500
+          - Nifty 200
+          - Nifty 50
+      interval:
+        description: 'Timeframe'
+        required: false
+        default: '15m'
+        type: choice
+        options:
+          - 15m
+          - 1h
+          - 1d
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run CPR Scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_ACTIONS: 'true'
+          ONCE: '1'
+          DATA_SOURCE: 'yahoo'
+          SCAN_UNIVERSE: ${{ github.event.inputs.universe || 'Total Cash Segment' }}
+          SCAN_INTERVAL: ${{ github.event.inputs.interval || '15m' }}
+          CLOSE_METHOD: 'Official Exchange LTP (Bhavcopy)'
+          TARGET_SESSION: 'Next Session'
+        run: python automation_bot.py
