@@ -63,7 +63,7 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
     # Build result DataFrame in one shot (no per-row Python loop)
     timestamps = last_day_df.index
 
-    def _safe(series, default=''):
+    def _safe(series, default=np.nan):
         """Replace NaN with default for display columns."""
         return series.fillna(default).values if hasattr(series, 'fillna') else series
 
@@ -211,5 +211,11 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
     logger.info(f"Scan complete: {len(results_df)} results from {len(data_cache) - skipped_count}/{len(data_cache)} fetched in {t_end-t0:.1f}s")
 
     if not results_df.empty:
+        # Ensure numeric columns are float (mixed types from _safe() cause sort errors)
+        for col in ['CPR_ATR_Ratio', 'CPR_ATR', 'CPR_Width', 'CPR_PP', 'CPR_BC', 'CPR_TC',
+                     'CPR_R1', 'CPR_R2', 'CPR_R3', 'CPR_S1', 'CPR_S2', 'CPR_S3',
+                     'Prev_Open', 'Prev_High', 'Prev_Low', 'Prev_Close', 'Prev_Volume']:
+            if col in results_df.columns:
+                results_df[col] = pd.to_numeric(results_df[col], errors='coerce')
         return results_df.sort_values(by='CPR_ATR_Ratio', ascending=True)
     return pd.DataFrame()
