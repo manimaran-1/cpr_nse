@@ -70,6 +70,10 @@ def check_conditions(df, symbol, daily_df=None):
                 'CPR_Position': cpr_position,
                 'Signal Time': idx.strftime('%d-%m-%Y %H:%M'),
                 'Volume': int(v),
+                'Prev_Open': cpr_df['Prev_Open'].iloc[pos] if not pd.isna(cpr_df['Prev_Open'].iloc[pos]) else '',
+                'Prev_High': cpr_df['Prev_High'].iloc[pos] if not pd.isna(cpr_df['Prev_High'].iloc[pos]) else '',
+                'Prev_Low': cpr_df['Prev_Low'].iloc[pos] if not pd.isna(cpr_df['Prev_Low'].iloc[pos]) else '',
+                'Prev_Close': cpr_df['Prev_Close'].iloc[pos] if not pd.isna(cpr_df['Prev_Close'].iloc[pos]) else '',
                 'CPR_PP': cpr_df['CPR_PP'].iloc[pos] if not pd.isna(cpr_df['CPR_PP'].iloc[pos]) else '',
                 'CPR_BC': cpr_bc if cpr_bc else '',
                 'CPR_TC': cpr_tc if cpr_tc else '',
@@ -83,6 +87,7 @@ def check_conditions(df, symbol, daily_df=None):
                 'CPR_S1': cpr_df['CPR_S1'].iloc[pos] if not pd.isna(cpr_df['CPR_S1'].iloc[pos]) else '',
                 'CPR_S2': cpr_df['CPR_S2'].iloc[pos] if not pd.isna(cpr_df['CPR_S2'].iloc[pos]) else '',
                 'CPR_S3': cpr_df['CPR_S3'].iloc[pos] if not pd.isna(cpr_df['CPR_S3'].iloc[pos]) else '',
+                'Prev_Volume': cpr_df['Prev_Volume'].iloc[pos] if not pd.isna(cpr_df['Prev_Volume'].iloc[pos]) else '',
             }
 
             results.append(result)

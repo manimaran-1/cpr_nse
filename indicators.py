@@ -1014,6 +1014,7 @@ def calculate_cpr(df, daily_df=None):
     prev_high = pd.Series(np.nan, index=df.index)
     prev_low = pd.Series(np.nan, index=df.index)
     prev_close = pd.Series(np.nan, index=df.index)
+    prev_volume = pd.Series(np.nan, index=df.index)
 
     # Use daily_df for ATR(14) when available (matches Zerodha), else fall back to intraday
     dates = df.index.date
@@ -1032,6 +1033,7 @@ def calculate_cpr(df, daily_df=None):
                 'low': float(row['low']),
                 'close': float(row['close']),
                 'open': float(row['open']),
+                'volume': int(row['volume']) if 'volume' in row.index else 0,
                 'atr': float(atr_val) if not pd.isna(atr_val) else 0,
             }
     else:
@@ -1046,6 +1048,7 @@ def calculate_cpr(df, daily_df=None):
                     'low': float(day_data['low'].min()),
                     'close': float(day_data['close'].iloc[-1]),
                     'open': float(day_data['open'].iloc[0]),
+                    'volume': int(day_data['volume'].sum()),
                     'atr': 0,
                 }
 
@@ -1116,6 +1119,7 @@ def calculate_cpr(df, daily_df=None):
         prev_high[curr_mask] = round(prev_high_val, 2)
         prev_low[curr_mask] = round(prev_low_val, 2)
         prev_close[curr_mask] = round(prev_close_val, 2)
+        prev_volume[curr_mask] = daily_ohlc[prev_d].get('volume', 0)
 
     return pd.DataFrame({
         'CPR_PP': cpr_pp, 'CPR_BC': cpr_bc, 'CPR_TC': cpr_tc,
@@ -1125,4 +1129,5 @@ def calculate_cpr(df, daily_df=None):
         'CPR_S1': cpr_s1, 'CPR_S2': cpr_s2, 'CPR_S3': cpr_s3,
         'Prev_Open': prev_open, 'Prev_High': prev_high,
         'Prev_Low': prev_low, 'Prev_Close': prev_close,
+        'Prev_Volume': prev_volume,
     }, index=df.index)

@@ -256,6 +256,7 @@ if st.session_state.results_df is not None:
                 return ""
 
             display_cols = ['Stock Name', 'Open', 'High', 'Low', 'Close', 'CPR_Position', 'Signal Time', 'Volume',
+                           'Prev_Open', 'Prev_High', 'Prev_Low', 'Prev_Close', 'Prev_Volume',
                            'CPR_PP', 'CPR_BC', 'CPR_TC', 'CPR_Width', 'CPR_ATR', 'CPR_ATR_Ratio', 'CPR_Type',
                            'CPR_R1', 'CPR_R2', 'CPR_R3', 'CPR_S1', 'CPR_S2', 'CPR_S3']
             display_cols = [c for c in display_cols if c in show_df.columns]
@@ -277,6 +278,11 @@ if st.session_state.results_df is not None:
                     "CPR_Position": st.column_config.TextColumn("LTP vs CPR", help="ABOVE TC = Bullish | BELOW BC = Bearish | INSIDE CPR = Neutral/Range-bound"),
                     "Signal Time": "Time (IST)",
                     "Volume": st.column_config.NumberColumn("Volume", format="%d"),
+                    "Prev_Open": st.column_config.NumberColumn("Prev O", format="%.2f", help="Previous Day Open"),
+                    "Prev_High": st.column_config.NumberColumn("Prev H", format="%.2f", help="Previous Day High"),
+                    "Prev_Low": st.column_config.NumberColumn("Prev L", format="%.2f", help="Previous Day Low"),
+                    "Prev_Close": st.column_config.NumberColumn("Prev C", format="%.2f", help="Previous Day Close"),
+                    "Prev_Volume": st.column_config.NumberColumn("Prev Vol", format="%d", help="Previous Day Volume (1d timeframe)"),
                     "CPR_PP": st.column_config.NumberColumn("CPR PP", format="%.2f", help="Central Pivot Point"),
                     "CPR_BC": st.column_config.NumberColumn("CPR BC", format="%.2f", help="Bottom Central of CPR"),
                     "CPR_TC": st.column_config.NumberColumn("CPR TC", format="%.2f", help="Top Central of CPR"),
