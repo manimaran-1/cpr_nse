@@ -114,7 +114,7 @@ def run_scan():
             return
 
         send_telegram_message(
-            f"🔍 *NSE Scanner 2.0 Started*\n"
+            f"🔍 *CPR Scanner 2.0 Started*\n"
             f"📊 Universe: {SCAN_UNIVERSE}\n"
             f"⏰ Timeframe: {SCAN_INTERVAL}\n"
             f"🎯 Session: {TARGET_SESSION}\n"
