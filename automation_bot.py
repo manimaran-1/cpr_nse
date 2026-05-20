@@ -118,7 +118,6 @@ def run_scan():
             f"📊 Universe: {SCAN_UNIVERSE}\n"
             f"⏰ Timeframe: {SCAN_INTERVAL}\n"
             f"🎯 Session: {TARGET_SESSION}\n"
-            f"💰 Method: {CLOSE_METHOD}\n"
             f"🔢 Symbols: {len(symbols)}"
         )
 
@@ -131,7 +130,11 @@ def run_scan():
         )
 
         if not results_df.empty:
-            results_df = results_df.sort_values(by='Signal Time', ascending=False)
+            # Bug 1 fix: sort by parsed datetime, not lexicographic string
+            results_df = results_df.sort_values(
+                by='Signal Time', ascending=False,
+                key=lambda col: pd.to_datetime(col, format='%d-%m-%Y %H:%M', errors='coerce')
+            )
 
             # Use Absolute Path for temporary CSV (Critical for system-level scheduling)
             base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -139,27 +142,27 @@ def run_scan():
             file_path = os.path.join(base_dir, filename)
 
             results_df.to_csv(file_path, index=False)
+            try:
+                # Generate Multi-Part Analysis Report
+                report_parts = reporter.generate_report(results_df, SCAN_UNIVERSE, SCAN_INTERVAL)
 
-            # Generate Multi-Part Analysis Report
-            report_parts = reporter.generate_report(results_df, SCAN_UNIVERSE, SCAN_INTERVAL)
+                # Send the CSV document with scan parameters in caption
+                caption = (
+                    f"📊 {SCAN_UNIVERSE} | {SCAN_INTERVAL}\n"
+                    f"🎯 {TARGET_SESSION} | {CLOSE_METHOD}\n"
+                    f"📈 {len(results_df)} signals | {now.strftime('%d-%b-%Y %H:%M')} IST"
+                )
+                send_telegram_document(file_path, caption)
 
-            # Send the CSV document with scan parameters in caption
-            caption = (
-                f"📊 {SCAN_UNIVERSE} | {SCAN_INTERVAL}\n"
-                f"🎯 {TARGET_SESSION} | {CLOSE_METHOD}\n"
-                f"📈 {len(results_df)} signals | {now.strftime('%d-%b-%Y %H:%M')} IST"
-            )
-            send_telegram_document(file_path, caption)
+                # Send all report parts as separate text messages
+                for part in report_parts:
+                    send_telegram_message(part)
 
-            # Send all report parts as separate text messages
-            for part in report_parts:
-                send_telegram_message(part)
-
-            logger.info(f"Results sent to Telegram: {len(results_df)} signals.")
-
-            # Cleanup
-            if os.path.exists(file_path):
-                os.remove(file_path)
+                logger.info(f"Results sent to Telegram: {len(results_df)} signals.")
+            finally:
+                # Bug 3 fix: always clean up CSV even if send fails
+                if os.path.exists(file_path):
+                    os.remove(file_path)
         else:
             if SEND_IF_EMPTY:
                 msg = (
@@ -222,18 +225,21 @@ def main():
                         run_scan()
                         last_run_id = current_run_id
                 
-                # Close message/reset at end of day
-                elif now.hour == 15 and now.minute > SCHEDULE_MINUTE and last_run_id == current_run_id:
-                    logger.info("Market session processing complete for today.")
-                    send_telegram_message(
-                        f"🏁 *Market Closed — End of Day*\n"
-                        f"📅 {now.strftime('%d-%b-%Y')}\n"
-                        f"✅ All scheduled scans completed."
-                    )
-                    last_run_id = f"{current_run_id}-CLOSED" # Prevent re-trigger if restarted
-                    
-            # Daily reset for last_run_id if needed (though current_run_id handles it)
-            if now.hour == 0 and now.minute == 0:
+                # QI 1 fix: end-of-day message fires regardless of whether 15:16 scan ran
+                elif now.hour == 15 and now.minute > SCHEDULE_MINUTE:
+                    eod_key = f"{now.strftime('%Y-%m-%d')}-CLOSED"
+                    if last_run_id != eod_key:
+                        logger.info("Market session processing complete for today.")
+                        send_telegram_message(
+                            f"🏁 *Market Closed — End of Day*\n"
+                            f"📅 {now.strftime('%d-%b-%Y')}\n"
+                            f"✅ All scheduled scans completed."
+                        )
+                        last_run_id = eod_key
+
+            # QI 2 fix: date-based reset — reliable across full minute
+            today_str = now.strftime('%Y-%m-%d')
+            if last_run_id and not last_run_id.startswith(today_str):
                 last_run_id = None
                 
         except Exception as e:

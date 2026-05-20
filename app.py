@@ -4,6 +4,7 @@ import scanner
 import data_loader
 import pytz
 import logging
+import time
 from datetime import datetime
 
 # --- LOG CAPTURE FOR UI ---
@@ -11,15 +12,18 @@ log_lines = []
 
 class StreamlitLogHandler(logging.Handler):
     def emit(self, record):
-        msg = self.format(record)
-        log_lines.append(msg)
+        log_lines.append(self.format(record))
 
-log_handler = StreamlitLogHandler()
-log_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-log_handler.setLevel(logging.INFO)
-for name in ['scanner', 'data_loader']:
-    lg = logging.getLogger(name)
-    lg.addHandler(log_handler)
+# Install handler exactly once per process (avoids duplicate handlers on Streamlit reruns)
+_LOG_HANDLER_INSTALLED = "_cpr_log_handler_installed"
+if not getattr(logging.getLogger('scanner'), _LOG_HANDLER_INSTALLED, False):
+    log_handler = StreamlitLogHandler()
+    log_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+    log_handler.setLevel(logging.INFO)
+    for name in ['scanner', 'data_loader']:
+        lg = logging.getLogger(name)
+        lg.addHandler(log_handler)
+    setattr(logging.getLogger('scanner'), _LOG_HANDLER_INSTALLED, True)
 
 # --- UI CONFIGURATION ---
 st.set_page_config(page_title="NSE CPR Scanner", layout="wide", page_icon="📈")
@@ -119,16 +123,20 @@ if "cpr_method" not in st.session_state.scan_metadata:
     st.session_state.scan_metadata["cpr_method"] = selected_cpr_method
 if "target_session" not in st.session_state.scan_metadata:
     st.session_state.scan_metadata["target_session"] = target_session_val
+if "data_source" not in st.session_state.scan_metadata:
+    st.session_state.scan_metadata["data_source"] = selected_data_source
 
 if (selected_universe != st.session_state.scan_metadata["universe"] or
     selected_timeframe != st.session_state.scan_metadata["timeframe"] or
     selected_cpr_method != st.session_state.scan_metadata.get("cpr_method") or
-    target_session_val != st.session_state.scan_metadata.get("target_session")):
+    target_session_val != st.session_state.scan_metadata.get("target_session") or
+    selected_data_source != st.session_state.scan_metadata.get("data_source")):
     st.session_state.results_df = None
     st.session_state.scan_metadata["universe"] = selected_universe
     st.session_state.scan_metadata["timeframe"] = selected_timeframe
     st.session_state.scan_metadata["cpr_method"] = selected_cpr_method
     st.session_state.scan_metadata["target_session"] = target_session_val
+    st.session_state.scan_metadata["data_source"] = selected_data_source
 
 st.sidebar.markdown("---")
 
@@ -153,7 +161,7 @@ else:
 st.info(f"**Scanning**: {selected_universe} | **Symbols**: {len(symbols)} | **Interval**: {selected_timeframe} | **CPR target**: {selected_session}")
 
 # --- EXECUTION ---
-if st.button("🚀 Start Market Scan", width="stretch"):
+if st.button("🚀 Start Market Scan", use_container_width=True):
     if not symbols:
         st.error("No valid symbols found.")
     else:
@@ -179,7 +187,6 @@ if st.button("🚀 Start Market Scan", width="stretch"):
             """, unsafe_allow_html=True)
 
         with st.spinner(f"Scanning {len(symbols)} stocks on {selected_timeframe} timeframe..."):
-            import time
             t0 = time.time()
             results_df = scanner.scan_market(
                 symbols,
@@ -194,7 +201,10 @@ if st.button("🚀 Start Market Scan", width="stretch"):
             progress_bar.empty()
 
             if not results_df.empty:
-                st.session_state.results_df = results_df.sort_values(by='Signal Time', ascending=False)
+                st.session_state.results_df = results_df.sort_values(
+                    by='Signal Time', ascending=False,
+                    key=lambda col: pd.to_datetime(col, format='%d-%m-%Y %H:%M', errors='coerce')
+                )
                 total_stocks = results_df['Stock Name'].nunique()
                 if 'CPR_Position' in results_df.columns:
                     above = len(results_df[results_df['CPR_Position'].str.contains('ABOVE', na=False)])
@@ -228,11 +238,13 @@ if st.session_state.results_df is not None:
         all_results_df = st.session_state.results_df.copy()
         full_df = all_results_df.copy()
 
-        # Apply filter
+        # Apply filter — use pd.to_numeric for safe numeric comparison
         if signal_filter == "Narrow CPR (ATR<0.50)":
-            full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) < 0.50 if x != '' else False)]
+            ratio = pd.to_numeric(full_df['CPR_ATR_Ratio'], errors='coerce')
+            full_df = full_df[ratio < 0.50]
         elif signal_filter == "Wide CPR (ATR>1.00)":
-            full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) > 1.00 if x != '' else False)]
+            ratio = pd.to_numeric(full_df['CPR_ATR_Ratio'], errors='coerce')
+            full_df = full_df[ratio > 1.00]
         elif signal_filter == "Above TC (Bullish)" and 'CPR_Position' in full_df.columns:
             full_df = full_df[full_df['CPR_Position'].str.contains('ABOVE', na=False)]
         elif signal_filter == "Below BC (Bearish)" and 'CPR_Position' in full_df.columns:
@@ -240,11 +252,16 @@ if st.session_state.results_df is not None:
         elif signal_filter == "Inside CPR (Neutral)" and 'CPR_Position' in full_df.columns:
             full_df = full_df[full_df['CPR_Position'].str.contains('INSIDE', na=False)]
 
-        # Show last date only in table
+        # Show last date only in table — guard against all-NaT
         if 'Signal Time' in full_df.columns and not full_df['Signal Time'].isna().all():
             signal_dates = pd.to_datetime(full_df['Signal Time'], errors='coerce', dayfirst=True)
-            last_date = signal_dates.max().date()
-            display_df = full_df[signal_dates.dt.date == last_date].copy()
+            max_ts = signal_dates.max()
+            if pd.isna(max_ts):
+                display_df = full_df.copy()
+                last_date = None
+            else:
+                last_date = max_ts.date()
+                display_df = full_df[signal_dates.dt.date == last_date].copy()
         else:
             display_df = full_df.copy()
             last_date = None
@@ -345,12 +362,12 @@ if st.session_state.results_df is not None:
                     "CPR_S3": st.column_config.NumberColumn("S3", format="%.2f", help="Support 3 = L - 2*(H - PP)"),
                 },
                 hide_index=True,
-                width="stretch"
+                use_container_width=True
             )
 
             # Download button
             csv = full_df.to_csv(index=False).encode('utf-8')
-            st.download_button(f"📥 Download Full Data ({len(full_df)} rows)", csv, "cpr_scan_full.csv", "text/csv", width="stretch")
+            st.download_button(f"📥 Download Full Data ({len(full_df)} rows)", csv, "cpr_scan_full.csv", "text/csv", use_container_width=True)
 
 # --- COLUMN DESCRIPTIONS ---
 st.markdown("---")

@@ -1,10 +1,18 @@
-streamlit
-pandas
-numpy
-yfinance
-python-dotenv
-pyotp
-requests
-pytz
-pandas-ta-classic
-pyarrow
+# Core framework
+streamlit>=1.35.0,<2.0.0
+
+# Data layer
+pandas>=2.0.0,<3.0.0
+numpy>=1.26.0,<2.0.0
+pyarrow>=14.0.0,<20.0.0
+
+# Market data
+yfinance>=0.2.50,<0.3.0
+
+# Technical indicators
+pandas-ta-classic>=0.3.14b0
+
+# Utilities
+python-dotenv>=1.0.0,<2.0.0
+requests>=2.31.0,<3.0.0
+pytz>=2024.1
