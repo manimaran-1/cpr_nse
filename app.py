@@ -28,7 +28,11 @@ hide_st_style = '''
 <style>
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
+header {visibility: hidden;}
 .stDeployButton {display: none !important;}
+[data-testid="stToolbar"] {display: none !important;}
+[data-testid="stDecoration"] {display: none !important;}
+#stDecoration {display: none !important;}
 </style>
 '''
 st.markdown(hide_st_style, unsafe_allow_html=True)
@@ -89,7 +93,7 @@ selected_timeframe = st.sidebar.selectbox("Timeframe (Interval)", timeframe_opti
 st.sidebar.markdown("---")
 st.sidebar.subheader("📡 Data Source")
 data_source_options = ["yflib", "yfapi"]
-selected_data_source = st.sidebar.selectbox("Data Fetch Method", data_source_options, index=0)
+selected_data_source = st.sidebar.selectbox("Data Fetch Method", data_source_options, index=1)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 CPR Close Baseline")
@@ -157,7 +161,7 @@ if st.button("🚀 Start Market Scan", width="stretch"):
             "yflib": "yfinance",
             "yfapi": "yahoo",
         }
-        data_loader.set_data_source(ds_map.get(selected_data_source, "yfinance"))
+        data_loader.set_data_source(ds_map.get(selected_data_source, "yahoo"))
 
         progress_bar = st.progress(0, text="Initializing scan...")
 
