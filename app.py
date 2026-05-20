@@ -101,20 +101,30 @@ cpr_method_options = [
 selected_cpr_method = st.sidebar.selectbox("Calculation Baseline Close", cpr_method_options, index=0)
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("📅 CPR Target Session")
+session_options = ["Current Session (Today's CPR)", "Next Session (Tomorrow's CPR)"]
+selected_session = st.sidebar.selectbox("Projected Session Target", session_options, index=0)
+target_session_val = "Next Session" if "Next" in selected_session else "Current Session"
+
+st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Filter")
 filter_options = ["All Stocks", "Narrow CPR (ATR<0.50)", "Wide CPR (ATR>1.00)", "Above TC (Bullish)", "Below BC (Bearish)", "Inside CPR (Neutral)"]
 signal_filter = st.sidebar.selectbox("Show", filter_options, index=0)
 
 if "cpr_method" not in st.session_state.scan_metadata:
     st.session_state.scan_metadata["cpr_method"] = selected_cpr_method
+if "target_session" not in st.session_state.scan_metadata:
+    st.session_state.scan_metadata["target_session"] = target_session_val
 
 if (selected_universe != st.session_state.scan_metadata["universe"] or
     selected_timeframe != st.session_state.scan_metadata["timeframe"] or
-    selected_cpr_method != st.session_state.scan_metadata.get("cpr_method")):
+    selected_cpr_method != st.session_state.scan_metadata.get("cpr_method") or
+    target_session_val != st.session_state.scan_metadata.get("target_session")):
     st.session_state.results_df = None
     st.session_state.scan_metadata["universe"] = selected_universe
     st.session_state.scan_metadata["timeframe"] = selected_timeframe
     st.session_state.scan_metadata["cpr_method"] = selected_cpr_method
+    st.session_state.scan_metadata["target_session"] = target_session_val
 
 st.sidebar.markdown("---")
 
@@ -136,7 +146,7 @@ else:
             st.warning(f"Could not load constituents for '{selected_universe}'; using Nifty 50 fallback.")
             symbols = data_loader.get_nifty50_symbols()
 
-st.info(f"**Scanning**: {selected_universe} | **Symbols**: {len(symbols)} | **Interval**: {selected_timeframe}")
+st.info(f"**Scanning**: {selected_universe} | **Symbols**: {len(symbols)} | **Interval**: {selected_timeframe} | **CPR target**: {selected_session}")
 
 # --- EXECUTION ---
 if st.button("🚀 Start Market Scan", width="stretch"):
@@ -171,7 +181,8 @@ if st.button("🚀 Start Market Scan", width="stretch"):
                 symbols,
                 interval=selected_timeframe,
                 progress_callback=update_progress,
-                close_method=selected_cpr_method
+                close_method=selected_cpr_method,
+                target_session=target_session_val
             )
             elapsed = time.time() - t0
 

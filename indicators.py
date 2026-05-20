@@ -968,7 +968,7 @@ def score_money_flow_breakdown(df, pos):
     }
 
 
-def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle Close", bhavcopy_lookup=None):
+def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle Close", bhavcopy_lookup=None, target_session="Current Session"):
     """
     Calculate Central Pivot Range (CPR) with ATR-Normalized Width + Support/Resistance levels.
 
@@ -1093,10 +1093,13 @@ def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle 
                 }
 
     for i, d in enumerate(unique_dates):
-        if i == 0:
-            continue  # No previous day for first day
+        if target_session == "Next Session":
+            prev_d = d
+        else:
+            if i == 0:
+                continue  # No previous day for first day
+            prev_d = unique_dates[i - 1]
 
-        prev_d = unique_dates[i - 1]
         if prev_d not in daily_ohlc:
             continue
 

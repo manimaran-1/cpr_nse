@@ -17,6 +17,18 @@ import urllib.error
 import zipfile
 import yfinance as yf
 
+# Fix TzCache permission errors on Streamlit Cloud — use project cache dir
+_tz_cache_dir = os.path.join(os.path.dirname(__file__), "cache", "tz_cache")
+os.makedirs(_tz_cache_dir, exist_ok=True)
+try:
+    yf.set_tz_cache_location(_tz_cache_dir)
+except Exception:
+    pass
+
+# Suppress yfinance's noisy stderr logging for missing/delisted symbols
+yf_logger = logging.getLogger("yfinance")
+yf_logger.setLevel(logging.CRITICAL)
+
 # Configuration for logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -53,11 +65,9 @@ def _ohlcv_cache_key(symbol, resolution, range_from, range_to):
 def _get_ohlcv_cache(symbol, resolution, range_from, range_to):
     """Return cached DataFrame if valid, else None. Uses parquet for safety."""
     key = _ohlcv_cache_key(symbol, resolution, range_from, range_to)
-    # Try parquet first, fall back to pickle for migration
     parquet_path = os.path.join(OHLCV_CACHE_DIR, f"{key}.parquet")
     pkl_path = os.path.join(OHLCV_CACHE_DIR, f"{key}.pkl")
 
-    # Check which cache file exists and its age
     cache_path = None
     if os.path.exists(parquet_path):
         cache_path = parquet_path
@@ -364,6 +374,9 @@ def nse_to_yahoo(nse_symbol):
     if ":" in sym:
         sym = sym.split(":")[1]
     sym = sym.replace("-EQ", "").replace("-INDEX", "")
+    # Apply symbol aliases for renamed stocks (e.g. ZOMATO -> ETERNAL)
+    if sym in SYMBOL_ALIASES:
+        sym = SYMBOL_ALIASES[sym]
     return f"{sym}.NS"
 
 
@@ -386,7 +399,7 @@ def _yf_fetch_chart(yf_symbol, interval='1h', range_str='60d'):
 
 
 def fetch_data_yfinance(symbol, interval='1h', period='60d'):
-    """Fetch OHLCV data from Yahoo Finance direct API."""
+    """Fetch OHLCV data from Yahoo Finance direct API (single HTTP request per symbol)."""
     try:
         yf_symbol = nse_to_yahoo(symbol)
 
@@ -407,14 +420,12 @@ def fetch_data_yfinance(symbol, interval='1h', period='60d'):
         chart_result = _yf_fetch_chart(yf_symbol, interval=yf_interval, range_str=range_str)
 
         if chart_result is None:
-            logger.warning(f"Yahoo Finance: No data for {yf_symbol}")
             return pd.DataFrame()
 
         timestamps = chart_result.get("timestamp", [])
         indicators = chart_result.get("indicators", {}).get("quote", [{}])[0]
 
         if not timestamps:
-            logger.warning(f"Yahoo Finance: Empty data for {yf_symbol}")
             return pd.DataFrame()
 
         df = pd.DataFrame({
@@ -431,7 +442,6 @@ def fetch_data_yfinance(symbol, interval='1h', period='60d'):
         df = df.dropna(subset=['close'])
 
         if df.empty:
-            logger.warning(f"Yahoo Finance: All NaN data for {yf_symbol}")
             return pd.DataFrame()
 
         for col in ['open', 'high', 'low', 'close']:
@@ -441,12 +451,12 @@ def fetch_data_yfinance(symbol, interval='1h', period='60d'):
         return df
 
     except Exception as e:
-        logger.debug(f"Yahoo Finance error for {symbol}: {e}")
+        logger.warning(f"Yahoo Finance error for {symbol}: {e}")
         return pd.DataFrame()
 
 
 def fetch_data_yf_lib(symbol, interval='1h', period='60d'):
-    """Fetch OHLCV data using yfinance library."""
+    """Fetch OHLCV data using yfinance library (multiple HTTP requests per symbol)."""
     try:
         yf_symbol = nse_to_yahoo(symbol)
 
@@ -468,7 +478,6 @@ def fetch_data_yf_lib(symbol, interval='1h', period='60d'):
         df = ticker.history(period=period, interval=yf_interval)
 
         if df.empty:
-            logger.warning(f"yfinance: No data for {yf_symbol} ({yf_interval})")
             return pd.DataFrame()
 
         df.columns = [c.lower() for c in df.columns]
@@ -483,7 +492,7 @@ def fetch_data_yf_lib(symbol, interval='1h', period='60d'):
         return df
 
     except Exception as e:
-        logger.debug(f"yfinance error for {symbol}: {e}")
+        logger.warning(f"yfinance library error for {symbol}: {e}")
         return pd.DataFrame()
 
 
@@ -492,14 +501,14 @@ def fetch_data_yf_lib(symbol, interval='1h', period='60d'):
 # ============================================================
 
 _DATA_SOURCE_MAP = {
-    "auto": "yfinance",
+    "auto": "yahoo",
     "yahoo": "yahoo",
     "yfapi": "yahoo",
     "yfinance": "yfinance",
     "yflib": "yfinance",
 }
 
-_active_data_source = "yfinance"
+_active_data_source = "yahoo"
 
 
 def set_data_source(source):
@@ -522,47 +531,49 @@ def get_data_source():
 def fetch_data(symbol, period='1y', interval='1d', retries=2, timeout=10, data_source=None):
     """
     Fetches historical OHLCV data.
-    Tries Yahoo Finance direct API first, falls back to yfinance library.
+    Checks disk cache first, then tries primary source, then falls back.
     """
     symbol = normalize_symbol(symbol)
 
     ds = data_source or _active_data_source
-    ds = _DATA_SOURCE_MAP.get(ds.lower() if ds else "yfinance", "yfinance")
+    ds = _DATA_SOURCE_MAP.get(ds.lower() if ds else "yahoo", "yahoo")
 
-    # Try primary source
-    if ds == "yfinance":
-        df = fetch_data_yf_lib(symbol, interval=interval)
-    else:
+    # Check disk cache first — avoids redundant network requests
+    res_map = {'1m': '1', '5m': '5', '15m': '15', '30m': '30', '60m': '60', '1h': '60', '1d': 'D'}
+    resolution = res_map.get(interval, 'D')
+    range_to = datetime.now().strftime("%Y-%m-%d")
+    range_from = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
+
+    cached = _get_ohlcv_cache(symbol, resolution, range_from, range_to)
+    if cached is not None:
+        return cached
+
+    # Try primary source (direct API is 1 request per symbol, more reliable)
+    if ds == "yahoo":
         df = fetch_data_yfinance(symbol, interval=interval)
+    else:
+        df = fetch_data_yf_lib(symbol, interval=interval)
 
     if not df.empty:
-        res_map = {'1m': '1', '5m': '5', '15m': '15', '30m': '30', '60m': '60', '1h': '60', '1d': 'D'}
-        resolution = res_map.get(interval, 'D')
-        range_to = datetime.now().strftime("%Y-%m-%d")
-        range_from = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
         _set_ohlcv_cache(symbol, resolution, range_from, range_to, df)
         return df
 
     # Fallback: if primary failed, try the other source
-    if ds == "yfinance":
-        logger.info(f"yfinance failed for {symbol}, trying Yahoo direct API...")
-        df = fetch_data_yfinance(symbol, interval=interval)
-    else:
-        logger.info(f"Yahoo direct API failed for {symbol}, trying yfinance library...")
+    if ds == "yahoo":
+        logger.debug(f"Yahoo direct API failed for {symbol}, trying yfinance library...")
         df = fetch_data_yf_lib(symbol, interval=interval)
+    else:
+        logger.debug(f"yfinance library failed for {symbol}, trying Yahoo direct API...")
+        df = fetch_data_yfinance(symbol, interval=interval)
 
     if not df.empty:
-        res_map = {'1m': '1', '5m': '5', '15m': '15', '30m': '30', '60m': '60', '1h': '60', '1d': 'D'}
-        resolution = res_map.get(interval, 'D')
-        range_to = datetime.now().strftime("%Y-%m-%d")
-        range_from = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
         _set_ohlcv_cache(symbol, resolution, range_from, range_to, df)
         return df
 
     return pd.DataFrame()
 
 
-def fetch_data_batch(symbols, interval='1h', max_workers=4):
+def fetch_data_batch(symbols, interval='1h', max_workers=4, progress_callback=None, phase_label=""):
     """Batch fetch OHLCV data with rate limiting to avoid Yahoo Finance blocks."""
     t0 = time.time()
     results = {}
@@ -576,6 +587,7 @@ def fetch_data_batch(symbols, interval='1h', max_workers=4):
         df = fetch_data(sym, interval=interval, data_source=ds)
         return sym, df
 
+    done_count = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_fetch_one, sym): sym for sym in symbols}
         for future in concurrent.futures.as_completed(futures):
@@ -586,6 +598,9 @@ def fetch_data_batch(symbols, interval='1h', max_workers=4):
             except Exception as e:
                 sym = futures[future]
                 logger.warning(f"Failed to fetch {sym}: {e}")
+            done_count += 1
+            if progress_callback and done_count % 50 == 0:
+                progress_callback(done_count, total, phase_label)
 
     elapsed = time.time() - t0
     logger.info(f"Batch complete: {len(results)}/{total} symbols in {elapsed:.1f}s")
@@ -623,12 +638,12 @@ def load_bhavcopy_lookup(date_val):
     """
     Downloads and caches the official NSE Bhavcopy for the specified date,
     then returns a fast dictionary lookup: Ticker -> details.
-    
+
     Returns:
         dict: Ticker symbol (str) -> dict of OHLCV + ltp, or None if failed.
     """
     global _bhavcopy_memory_cache
-    
+
     # Normalize to datetime.date
     if isinstance(date_val, datetime):
         d_key = date_val.date()
@@ -658,7 +673,7 @@ def load_bhavcopy_lookup(date_val):
     # 2. Download from NSE archives
     url = f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{dt_str}_F_0000.csv.zip"
     logger.info(f"Downloading Bhavcopy from exchange for {d_key}...")
-    
+
     try:
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -666,19 +681,19 @@ def load_bhavcopy_lookup(date_val):
         })
         with urllib.request.urlopen(req, timeout=12) as response:
             zip_data = response.read()
-            
+
         # Write to disk cache
         with open(cache_path, "wb") as f:
             f.write(zip_data)
-            
+
         lookup = _parse_bhavcopy_zip(cache_path)
         if lookup:
             _bhavcopy_memory_cache[d_key] = lookup
             return lookup
-            
+
     except Exception as e:
         logger.warning(f"Bhavcopy download/parse failed for {d_key}: {e}")
-        
+
     return None
 
 def _parse_bhavcopy_zip(zip_path):
@@ -688,17 +703,17 @@ def _parse_bhavcopy_zip(zip_path):
             files = z.namelist()
             with z.open(files[0]) as f:
                 df = pd.read_csv(f)
-        
+
         # Strip whitespaces from column names
         df.columns = [c.strip() for c in df.columns]
-        
+
         # Verify required columns exist (clean column mapping)
         required_cols = ['TckrSymb', 'OpnPric', 'HghPric', 'LwPric', 'ClsPric', 'LastPric', 'TtlTradgVol']
         for col in required_cols:
             if col not in df.columns:
                 logger.error(f"Required Bhavcopy column {col} missing! Found: {df.columns.tolist()[:10]}")
                 return None
-                
+
         # Build dictionary lookup
         lookup = {}
         for _, row in df.iterrows():
