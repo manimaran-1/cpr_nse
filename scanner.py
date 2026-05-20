@@ -10,11 +10,12 @@ logger = logging.getLogger(__name__)
 IST = pytz.timezone('Asia/Kolkata')
 
 
-def check_conditions(df, symbol, daily_df=None):
+def check_conditions(df, symbol, ref_df=None, daily_df=None):
     """
     CPR-only scanner — computes ATR-Normalized CPR levels + S/R.
     Returns all candles from the last trading day.
-    daily_df: daily OHLC data for accurate CPR calculation (avoids hourly aggregation mismatch)
+    ref_df: pre-fetched reference timeframe data for CPR (prev day/week/month candle)
+    daily_df: daily OHLC data for ATR(14) calculation
     """
     if df.empty or len(df) < 20:
         return []
@@ -25,8 +26,8 @@ def check_conditions(df, symbol, daily_df=None):
     close = df['close']
     volume = df['volume']
 
-    # CPR (Central Pivot Range) with ATR normalization — use daily OHLC for accuracy
-    cpr_df = indicators.calculate_cpr(df, daily_df=daily_df)
+    # CPR — use ref_df (prev day/week/month candle) + daily_df for ATR(14)
+    cpr_df = indicators.calculate_cpr(df, ref_df=ref_df, daily_df=daily_df)
 
     # Get all bars from the last date
     last_date = df.index[-1].date()
@@ -102,7 +103,12 @@ def check_conditions(df, symbol, daily_df=None):
 def scan_market(symbols, interval='1d', progress_callback=None):
     """
     CPR Scanner — fetches data and computes ATR-Normalized CPR for all stocks.
-    Fetches daily OHLC separately for accurate CPR levels.
+
+    CPR reference period per Zerodha Varsity:
+        - Daily chart    → prev MONTH's candle  (fetch 1mo data)
+        - 1h, 30m chart  → prev WEEK's candle   (fetch 1wk data)
+        - 1-15m chart    → prev DAY's candle    (fetch 1d data)
+    ATR(14) always computed from daily data.
     """
     import time as _time
     t0 = _time.time()
@@ -116,13 +122,28 @@ def scan_market(symbols, interval='1d', progress_callback=None):
     t2 = _time.time()
     logger.info(f"Phase 1 complete: {len(data_cache)}/{total} symbols in {t2-t1:.1f}s")
 
-    # Fetch daily OHLC for accurate CPR (only if using intraday timeframe)
+    # Determine CPR reference timeframe per Zerodha Varsity
+    if interval in ['1d', 'daily']:
+        cpr_ref_interval = '1mo'
+    elif interval in ['1h', '60m', '30m']:
+        cpr_ref_interval = '1wk'
+    else:
+        cpr_ref_interval = '1d'
+
+    # Fetch CPR reference timeframe data
+    ref_cache = {}
+    logger.info(f"Phase 1b: Fetching {cpr_ref_interval} data for CPR reference...")
+    t1b = _time.time()
+    ref_cache = data_loader.fetch_data_batch(symbols, interval=cpr_ref_interval, max_workers=4)
+    logger.info(f"Phase 1b complete: {len(ref_cache)}/{total} in {_time.time()-t1b:.1f}s")
+
+    # Fetch daily data for ATR(14) if not already daily
     daily_cache = {}
-    if interval in ['1h', '15m', '5m', '1m', '30m']:
-        logger.info(f"Phase 1b: Fetching daily OHLC for accurate CPR...")
-        t1b = _time.time()
+    if interval != '1d':
+        logger.info(f"Phase 1c: Fetching daily data for ATR(14)...")
+        t1c = _time.time()
         daily_cache = data_loader.fetch_data_batch(symbols, interval='1d', max_workers=4)
-        logger.info(f"Phase 1b complete: {len(daily_cache)}/{total} daily in {_time.time()-t1b:.1f}s")
+        logger.info(f"Phase 1c complete: {len(daily_cache)}/{total} in {_time.time()-t1c:.1f}s")
 
     # === PHASE 2: COMPUTE CPR ===
     logger.info("Phase 2: Computing CPR...")
@@ -135,8 +156,9 @@ def scan_market(symbols, interval='1d', progress_callback=None):
                 completed_count += 1
                 continue
 
+            ref_df = ref_cache.get(sym) if ref_cache else None
             daily_df = daily_cache.get(sym) if daily_cache else None
-            results = check_conditions(df, sym, daily_df=daily_df)
+            results = check_conditions(df, sym, ref_df=ref_df, daily_df=daily_df)
             if results:
                 all_results.extend(results)
             completed_count += 1

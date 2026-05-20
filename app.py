@@ -305,68 +305,151 @@ if st.session_state.results_df is not None:
             csv = full_df.to_csv(index=False).encode('utf-8')
             st.download_button(f"📥 Download Full Data ({len(full_df)} rows)", csv, "cpr_scan_full.csv", "text/csv", width="stretch")
 
-# --- CPR DESCRIPTION ---
+# --- COLUMN DESCRIPTIONS ---
 st.markdown("---")
-st.markdown("### 📊 Central Pivot Range (CPR) — ATR-Normalized Width")
+st.markdown("### 📊 Signal Table — Column Descriptions & Formulas")
 
-col_cpr1, col_cpr2 = st.columns([2, 1])
+st.markdown("""
+All CPR levels are calculated from the **previous trading day's daily OHLC** (1d timeframe) using the **Zerodha rounding method**.
+OHLCV columns (Open, High, Low, Close, Volume) reflect the **last candle** of the selected timeframe (e.g., 1h, 15m, 5m).
+""")
 
-with col_cpr1:
+with st.expander("💰 Price Columns — Open, High, Low, Close (LTP)", expanded=False):
     st.markdown("""
-    **CPR** is calculated from the **previous day's High, Low, and Close** using Zerodha rounding method.
+    These columns show OHLC of the **last candle** in the selected timeframe (1h/15m/5m/1d).
 
-    **CPR Levels** (Zerodha method: round PP to 1 decimal, then compute TC from rounded PP):
+    | Column | Description | Source |
+    |--------|-------------|--------|
+    | **Open** | Opening price of the last candle | Selected timeframe (e.g., 1h candle at 14:15) |
+    | **High** | Highest price reached in the last candle | Selected timeframe |
+    | **Low** | Lowest price reached in the last candle | Selected timeframe |
+    | **Close (LTP)** | Closing price = Last Traded Price | Selected timeframe |
 
-    | Level | Formula |
-    |-------|---------|
-    | **PP** | round((H + L + C) / 3, 1) |
-    | **BC** | round((H + L) / 2, 2) |
-    | **TC** | round(2 × PP − BC, 2) |
-    | **Width** | abs(TC − BC) |
-
-    **Support & Resistance Levels:**
-
-    | Level | Formula |
-    |-------|---------|
-    | **R1** | 2 × PP − L |
-    | **R2** | PP + (H − L) |
-    | **R3** | PP + 2 × (H − L) |
-    | **S1** | 2 × PP − H |
-    | **S2** | PP − (H − L) |
-    | **S3** | PP − 2 × (H − L) |
-
-    **LTP vs CPR Position:**
-    - **ABOVE TC** → Bullish bias, look for long setups
-    - **BELOW BC** → Bearish bias, look for short setups
-    - **INSIDE CPR** → Range-bound, wait for breakout
-
-    **ATR-Normalized Classification:**
-
-    | ATR Ratio | Classification | Action |
-    |-----------|----------------|--------|
-    | < 0.15 | EXTREME NARROW | Major breakout |
-    | 0.15 - 0.30 | VERY NARROW | Strong breakout |
-    | 0.30 - 0.50 | NARROW | Good breakout |
-    | 0.50 - 1.00 | NORMAL | Trend follow |
-    | 1.00 - 1.50 | SLIGHTLY WIDE | Cautious |
-    | 1.50 - 2.00 | WIDE | Range trade |
-    | > 2.00 | VERY WIDE | Avoid |
+    > **Note:** For 1h timeframe, these values come from the 14:15 candle. They are **NOT** daily OHLC.
     """)
 
-with col_cpr2:
-    st.info("""
-    **CPR Position Guide:**
+with st.expander("📊 Volume", expanded=False):
+    st.markdown("""
+    | Column | Description | Source |
+    |--------|-------------|--------|
+    | **Volume** | Traded volume in the last candle | Selected timeframe (e.g., 1h candle) |
 
-    1. Price **above TC** → Bullish
-    2. Price **below BC** → Bearish
-    3. Price **inside CPR** → Wait
-
-    **ATR Ratio Guide:**
-
-    1. **< 0.30** → Breakout trading
-    2. **0.30-1.00** → Trend following
-    3. **> 1.00** → Range-bound
+    > **Note:** This is the volume of a single candle, not the full day. For daily volume, see Prev Volume.
     """)
+
+with st.expander("🎯 LTP vs CPR Position", expanded=False):
+    st.markdown("""
+    Compares the **Close (LTP)** of the last candle against **CPR TC** and **CPR BC** levels.
+
+    | Position | Condition | Meaning |
+    |----------|-----------|---------|
+    | **ABOVE TC (Bullish)** | Close > TC | Price is above the CPR range — bullish bias |
+    | **BELOW BC (Bearish)** | Close < BC | Price is below the CPR range — bearish bias |
+    | **INSIDE CPR (Neutral)** | BC ≤ Close ≤ TC | Price is within the CPR range — range-bound / wait |
+
+    **Formula:**
+    ```
+    if Close > TC  → ABOVE TC (Bullish)
+    if Close < BC  → BELOW BC (Bearish)
+    else           → INSIDE CPR (Neutral)
+    ```
+    """)
+
+with st.expander("🕐 Signal Time", expanded=False):
+    st.markdown("""
+    | Column | Description |
+    |--------|-------------|
+    | **Signal Time** | Timestamp of the **last candle** in the selected timeframe (IST) |
+
+    For 1h timeframe, this is typically 14:15 IST (last hourly candle of the trading day).
+    """)
+
+with st.expander("📅 Previous Day OHLCV (1d Timeframe)", expanded=False):
+    st.markdown("""
+    These values are fetched from the **daily (1d) timeframe** — they represent the **complete previous trading day**.
+    Used for CPR calculation. Always from 1d data regardless of the selected timeframe.
+
+    | Column | Description | Formula |
+    |--------|-------------|---------|
+    | **Prev Open** | Previous day's opening price | Daily candle Open |
+    | **Prev High** | Previous day's highest price | Daily candle High |
+    | **Prev Low** | Previous day's lowest price | Daily candle Low |
+    | **Prev Close** | Previous day's closing price | Daily candle Close |
+    | **Prev Volume** | Previous day's total traded volume | Daily candle Volume |
+
+    > **Important:** These are **daily** values, not from the selected timeframe. They match what Zerodha/Kite shows for the previous day.
+    """)
+
+with st.expander("📐 CPR Levels — PP, BC, TC, Width", expanded=False):
+    st.markdown("""
+    Calculated from **previous day's High (H), Low (L), Close (C)** using Zerodha rounding method.
+
+    | Column | Name | Formula | Rounding |
+    |--------|------|---------|----------|
+    | **CPR PP** | Central Pivot Point | (H + L + C) / 3 | Round to 1 decimal |
+    | **CPR BC** | Bottom Central | (H + L) / 2 | Round to 2 decimals |
+    | **CPR TC** | Top Central | 2 × PP − BC | Round to 2 decimals |
+    | **CPR Width** | Range Width | abs(TC − BC) | 2 decimals |
+
+    **Zerodha Method:** PP is rounded to **1 decimal first**, then TC is computed from the rounded PP. This matches Zerodha/Kite/ChartIQ exactly.
+
+    **Example (RVNL):**
+    ```
+    Prev Day: H=278.30, L=270.35, C=271.55
+    PP = round((278.30 + 270.35 + 271.55) / 3, 1) = 273.4
+    BC = round((278.30 + 270.35) / 2, 2) = 274.32
+    TC = round(2 × 273.4 − 274.32, 2) = 272.48
+    Width = abs(272.48 − 274.32) = 1.84
+    ```
+    """)
+
+with st.expander("📈 ATR(14) & CPR Classification", expanded=False):
+    st.markdown("""
+    **ATR(14)** is calculated from the **daily (1d) timeframe** — Average True Range over 14 periods.
+    **ATR Ratio** = CPR Width / ATR(14) — normalizes CPR width across all price ranges.
+
+    | Column | Description | Formula |
+    |--------|-------------|---------|
+    | **CPR ATR** | Daily ATR(14) value | ATR of previous day (1d timeframe) |
+    | **CPR ATR Ratio** | Width / ATR(14) | Normalized width — comparable across stocks |
+    | **CPR Type** | Classification | Based on ATR Ratio thresholds |
+
+    **ATR Ratio Classification:**
+
+    | ATR Ratio | Classification | Trading Implication |
+    |-----------|----------------|---------------------|
+    | < 0.15 | EXTREME NARROW | Major breakout expected — highest probability setup |
+    | 0.15 - 0.30 | VERY NARROW | Strong breakout expected |
+    | 0.30 - 0.50 | NARROW | Good breakout setup |
+    | 0.50 - 1.00 | NORMAL | Follow the trend |
+    | 1.00 - 1.50 | SLIGHTLY WIDE | Cautious — may consolidate |
+    | 1.50 - 2.00 | WIDE | Range-bound trading |
+    | > 2.00 | VERY WIDE | Avoid — no clear edge |
+
+    **Why ATR-Normalized?** A ₹10 width means different things for a ₹100 stock vs a ₹10,000 stock.
+    ATR Ratio makes it universal — 0.20 means the same tight squeeze regardless of price.
+    """)
+
+with st.expander("🔴🟢 Support & Resistance Levels — R1, R2, R3, S1, S2, S3", expanded=False):
+    st.markdown("""
+    Standard pivot-based Support and Resistance levels, computed from **previous day's H, L, C** using the rounded PP.
+
+    | Level | Formula | Description |
+    |-------|---------|-------------|
+    | **R1** | 2 × PP − L | First resistance — breakout target |
+    | **R2** | PP + (H − L) | Second resistance — strong target |
+    | **R3** | PP + 2 × (H − L) | Third resistance — extended target |
+    | **S1** | 2 × PP − H | First support — pullback target |
+    | **S2** | PP − (H − L) | Second support — strong support |
+    | **S3** | PP − 2 × (H − L) | Third support — extended support |
+
+    **Trading Use:**
+    - Price above **R1** → strong bullish momentum, target **R2**
+    - Price below **S1** → strong bearish momentum, target **S2**
+    - Price between **S1 and R1** → range-bound within normal pivot levels
+    """)
+
+st.markdown("---")
 
 # --- SCAN LOGS ---
 st.markdown("---")
