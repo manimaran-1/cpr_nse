@@ -560,10 +560,10 @@ def fetch_data(symbol, period='1y', interval='1d', retries=2, timeout=10, data_s
 
     # Fallback: if primary failed, try the other source
     if ds == "yahoo":
-        logger.debug(f"Yahoo direct API failed for {symbol}, trying yfinance library...")
+        logger.info(f"Yahoo direct failed for {symbol}, trying yfinance library...")
         df = fetch_data_yf_lib(symbol, interval=interval)
     else:
-        logger.debug(f"yfinance library failed for {symbol}, trying Yahoo direct API...")
+        logger.info(f"yfinance library failed for {symbol}, trying Yahoo direct API...")
         df = fetch_data_yfinance(symbol, interval=interval)
 
     if not df.empty:
@@ -588,6 +588,7 @@ def fetch_data_batch(symbols, interval='1h', max_workers=4, progress_callback=No
         return sym, df
 
     done_count = 0
+    failed_symbols = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_fetch_one, sym): sym for sym in symbols}
         for future in concurrent.futures.as_completed(futures):
@@ -595,8 +596,11 @@ def fetch_data_batch(symbols, interval='1h', max_workers=4, progress_callback=No
                 sym, df = future.result(timeout=60)
                 if df is not None and not df.empty:
                     results[sym] = df
+                else:
+                    failed_symbols.append(sym)
             except Exception as e:
                 sym = futures[future]
+                failed_symbols.append(sym)
                 logger.warning(f"Failed to fetch {sym}: {e}")
             done_count += 1
             if progress_callback and done_count % 50 == 0:
@@ -604,6 +608,8 @@ def fetch_data_batch(symbols, interval='1h', max_workers=4, progress_callback=No
 
     elapsed = time.time() - t0
     logger.info(f"Batch complete: {len(results)}/{total} symbols in {elapsed:.1f}s")
+    if failed_symbols:
+        logger.warning(f"Failed symbols ({len(failed_symbols)}): {', '.join(failed_symbols[:20])}{'...' if len(failed_symbols) > 20 else ''}")
     return results
 
 
