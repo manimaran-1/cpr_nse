@@ -64,16 +64,8 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
     timestamps = last_day_df.index
 
     def _safe(series, default=''):
-        """Replace NaN with default; return array safely."""
-        if hasattr(series, 'fillna'):
-            return series.fillna(default).values
-        return series
-
-    def _safe_numeric(series):
-        """Force a column to float, coercing any strings to NaN."""
-        if hasattr(series, 'values'):
-            return pd.to_numeric(series, errors='coerce').values
-        return pd.to_numeric(pd.Series(series), errors='coerce').values
+        """Replace NaN with default for display columns."""
+        return series.fillna(default).values if hasattr(series, 'fillna') else series
 
     result_df = pd.DataFrame({
         'Stock Name': symbol,
@@ -84,24 +76,24 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
         'CPR_Position': cpr_position,
         'Signal Time': [t.strftime('%d-%m-%Y %H:%M') for t in timestamps],
         'Volume': last_day_df['volume'].fillna(0).astype(int).values,
-        'Prev_Open': _safe_numeric(last_day_cpr['Prev_Open']),
-        'Prev_High': _safe_numeric(last_day_cpr['Prev_High']),
-        'Prev_Low': _safe_numeric(last_day_cpr['Prev_Low']),
-        'Prev_Close': _safe_numeric(last_day_cpr['Prev_Close']),
-        'CPR_PP': _safe_numeric(last_day_cpr['CPR_PP']),
-        'CPR_BC': _safe_numeric(last_day_cpr['CPR_BC']),
-        'CPR_TC': _safe_numeric(last_day_cpr['CPR_TC']),
-        'CPR_Width': _safe_numeric(last_day_cpr['CPR_Width']),
-        'CPR_ATR': _safe_numeric(last_day_cpr['CPR_ATR']),
-        'CPR_ATR_Ratio': _safe_numeric(last_day_cpr['CPR_ATR_Ratio']),
-        'CPR_Type': _safe(last_day_cpr['CPR_Type'], default=''),
-        'CPR_R1': _safe_numeric(last_day_cpr['CPR_R1']),
-        'CPR_R2': _safe_numeric(last_day_cpr['CPR_R2']),
-        'CPR_R3': _safe_numeric(last_day_cpr['CPR_R3']),
-        'CPR_S1': _safe_numeric(last_day_cpr['CPR_S1']),
-        'CPR_S2': _safe_numeric(last_day_cpr['CPR_S2']),
-        'CPR_S3': _safe_numeric(last_day_cpr['CPR_S3']),
-        'Prev_Volume': _safe_numeric(last_day_cpr['Prev_Volume']),
+        'Prev_Open': _safe(last_day_cpr['Prev_Open']),
+        'Prev_High': _safe(last_day_cpr['Prev_High']),
+        'Prev_Low': _safe(last_day_cpr['Prev_Low']),
+        'Prev_Close': _safe(last_day_cpr['Prev_Close']),
+        'CPR_PP': _safe(last_day_cpr['CPR_PP']),
+        'CPR_BC': _safe(last_day_cpr['CPR_BC']),
+        'CPR_TC': _safe(last_day_cpr['CPR_TC']),
+        'CPR_Width': _safe(last_day_cpr['CPR_Width']),
+        'CPR_ATR': _safe(last_day_cpr['CPR_ATR']),
+        'CPR_ATR_Ratio': _safe(last_day_cpr['CPR_ATR_Ratio']),
+        'CPR_Type': _safe(last_day_cpr['CPR_Type']),
+        'CPR_R1': _safe(last_day_cpr['CPR_R1']),
+        'CPR_R2': _safe(last_day_cpr['CPR_R2']),
+        'CPR_R3': _safe(last_day_cpr['CPR_R3']),
+        'CPR_S1': _safe(last_day_cpr['CPR_S1']),
+        'CPR_S2': _safe(last_day_cpr['CPR_S2']),
+        'CPR_S3': _safe(last_day_cpr['CPR_S3']),
+        'Prev_Volume': _safe(last_day_cpr['Prev_Volume']),
     })
 
     return result_df.to_dict('records')
@@ -219,6 +211,5 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
     logger.info(f"Scan complete: {len(results_df)} results from {len(data_cache) - skipped_count}/{len(data_cache)} fetched in {t_end-t0:.1f}s")
 
     if not results_df.empty:
-        results_df['CPR_ATR_Ratio'] = pd.to_numeric(results_df['CPR_ATR_Ratio'], errors='coerce')
-        return results_df.sort_values(by='CPR_ATR_Ratio', ascending=True, na_position='last')
+        return results_df.sort_values(by='CPR_ATR_Ratio', ascending=True)
     return pd.DataFrame()

@@ -79,7 +79,7 @@ def _get_ohlcv_cache(symbol, resolution, range_from, range_to):
 
     age_sec = time.time() - os.path.getmtime(cache_path)
     now_ist = datetime.now(IST)
-    market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_open = now_ist.replace(hour=9, minute=0, second=0, microsecond=0)
     market_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
     if market_open <= now_ist <= market_close:
         max_age = OHLCV_CACHE_MINUTES * 60
@@ -92,8 +92,7 @@ def _get_ohlcv_cache(symbol, resolution, range_from, range_to):
                 return pd.read_parquet(cache_path)
             else:
                 # Migrate old pickle to parquet
-                with open(cache_path, "rb") as f:
-                    df = pickle.load(f)
+                df = pickle.load(open(cache_path, "rb"))
                 try:
                     df.to_parquet(parquet_path)
                     os.remove(pkl_path)
@@ -452,9 +451,6 @@ def fetch_data_yfinance(symbol, interval='1h', period='60d'):
         return df
 
     except Exception as e:
-        err_str = str(e).lower()
-        if "429" in err_str or "too many" in err_str or "rate limit" in err_str:
-            _mark_rate_limited("yahoo")
         logger.warning(f"Yahoo Finance error for {symbol}: {e}")
         return pd.DataFrame()
 
@@ -496,15 +492,12 @@ def fetch_data_yf_lib(symbol, interval='1h', period='60d'):
         return df
 
     except Exception as e:
-        err_str = str(e).lower()
-        if "429" in err_str or "too many" in err_str or "rate limit" in err_str:
-            _mark_rate_limited("yfinance")
         logger.warning(f"yfinance library error for {symbol}: {e}")
         return pd.DataFrame()
 
 
 # ============================================================
-# DATA SOURCE MANAGEMENT + RATE LIMIT TRACKING
+# DATA SOURCE MANAGEMENT
 # ============================================================
 
 _DATA_SOURCE_MAP = {
@@ -516,24 +509,6 @@ _DATA_SOURCE_MAP = {
 }
 
 _active_data_source = "yahoo"
-
-# Rate limit tracking: when a source gets "Too Many Requests", we skip it for N seconds
-_rate_limited_until = {"yahoo": 0.0, "yfinance": 0.0}
-_rate_limit_lock = threading.Lock()
-_RATE_LIMIT_COOLDOWN = 120  # seconds to wait before retrying a rate-limited source
-
-
-def _mark_rate_limited(source):
-    """Mark a data source as rate-limited."""
-    with _rate_limit_lock:
-        _rate_limited_until[source] = time.time() + _RATE_LIMIT_COOLDOWN
-    logger.warning(f"Source '{source}' rate-limited — switching to fallback for {_RATE_LIMIT_COOLDOWN}s")
-
-
-def _is_rate_limited(source):
-    """Check if a data source is currently rate-limited."""
-    with _rate_limit_lock:
-        return time.time() < _rate_limited_until[source]
 
 
 def set_data_source(source):
@@ -549,18 +524,6 @@ def get_data_source():
     return _active_data_source
 
 
-def _choose_source(preferred):
-    """Pick the best available source, skipping rate-limited ones."""
-    if not _is_rate_limited(preferred):
-        return preferred
-    fallback = "yfinance" if preferred == "yahoo" else "yahoo"
-    if not _is_rate_limited(fallback):
-        logger.info(f"Primary '{preferred}' rate-limited, using '{fallback}'")
-        return fallback
-    # Both rate-limited — prefer the one that expires sooner
-    return preferred if _rate_limited_until[preferred] <= _rate_limited_until[fallback] else fallback
-
-
 # ============================================================
 # DATA FETCHING
 # ============================================================
@@ -568,7 +531,7 @@ def _choose_source(preferred):
 def fetch_data(symbol, period='1y', interval='1d', retries=2, timeout=10, data_source=None):
     """
     Fetches historical OHLCV data.
-    Checks disk cache first, then tries primary source with rate-limit-aware fallback.
+    Checks disk cache first, then tries primary source, then falls back.
     """
     symbol = normalize_symbol(symbol)
 
@@ -578,20 +541,15 @@ def fetch_data(symbol, period='1y', interval='1d', retries=2, timeout=10, data_s
     # Check disk cache first — avoids redundant network requests
     res_map = {'1m': '1', '5m': '5', '15m': '15', '30m': '30', '60m': '60', '1h': '60', '1d': 'D'}
     resolution = res_map.get(interval, 'D')
-    _INTERVAL_DAYS = {'1m': 5, '5m': 60, '15m': 60, '30m': 60, '60m': 60, '1h': 60, '1d': 730}
-    lookback_days = _INTERVAL_DAYS.get(interval, 60)
     range_to = datetime.now().strftime("%Y-%m-%d")
-    range_from = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    range_from = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
 
     cached = _get_ohlcv_cache(symbol, resolution, range_from, range_to)
     if cached is not None:
         return cached
 
-    # Choose best source (skip rate-limited ones)
-    active = _choose_source(ds)
-
-    # Try primary source
-    if active == "yahoo":
+    # Try primary source (direct API is 1 request per symbol, more reliable)
+    if ds == "yahoo":
         df = fetch_data_yfinance(symbol, interval=interval)
     else:
         df = fetch_data_yf_lib(symbol, interval=interval)
@@ -601,16 +559,12 @@ def fetch_data(symbol, period='1y', interval='1d', retries=2, timeout=10, data_s
         return df
 
     # Fallback: if primary failed, try the other source
-    fallback = "yfinance" if active == "yahoo" else "yahoo"
-    if not _is_rate_limited(fallback):
-        if active == "yahoo":
-            logger.debug(f"Yahoo direct API failed for {symbol}, trying yfinance library...")
-        else:
-            logger.debug(f"yfinance library failed for {symbol}, trying Yahoo direct API...")
-        if fallback == "yahoo":
-            df = fetch_data_yfinance(symbol, interval=interval)
-        else:
-            df = fetch_data_yf_lib(symbol, interval=interval)
+    if ds == "yahoo":
+        logger.debug(f"Yahoo direct API failed for {symbol}, trying yfinance library...")
+        df = fetch_data_yf_lib(symbol, interval=interval)
+    else:
+        logger.debug(f"yfinance library failed for {symbol}, trying Yahoo direct API...")
+        df = fetch_data_yfinance(symbol, interval=interval)
 
     if not df.empty:
         _set_ohlcv_cache(symbol, resolution, range_from, range_to, df)
@@ -645,8 +599,7 @@ def fetch_data_batch(symbols, interval='1h', max_workers=4, progress_callback=No
                 sym = futures[future]
                 logger.warning(f"Failed to fetch {sym}: {e}")
             done_count += 1
-            PROGRESS_STEP = max(1, min(50, total // 10))
-            if progress_callback and (done_count % PROGRESS_STEP == 0 or done_count == total):
+            if progress_callback and done_count % 50 == 0:
                 progress_callback(done_count, total, phase_label)
 
     elapsed = time.time() - t0
@@ -689,6 +642,7 @@ def load_bhavcopy_lookup(date_val):
     Returns:
         dict: Ticker symbol (str) -> dict of OHLCV + ltp, or None if failed.
     """
+    global _bhavcopy_memory_cache
 
     # Normalize to datetime.date
     if isinstance(date_val, datetime):
@@ -760,13 +714,18 @@ def _parse_bhavcopy_zip(zip_path):
                 logger.error(f"Required Bhavcopy column {col} missing! Found: {df.columns.tolist()[:10]}")
                 return None
 
-        # Vectorized dictionary lookup (50-100x faster than iterrows)
-        df['TckrSymb'] = df['TckrSymb'].astype(str).str.strip()
-        records = df.set_index('TckrSymb')[['OpnPric','HghPric','LwPric','ClsPric','LastPric','TtlTradgVol']].rename(
-            columns={'OpnPric':'open','HghPric':'high','LwPric':'low',
-                     'ClsPric':'close','LastPric':'ltp','TtlTradgVol':'volume'}
-        ).to_dict(orient='index')
-        lookup = {sym: {**v, 'volume': int(v['volume'])} for sym, v in records.items()}
+        # Build dictionary lookup
+        lookup = {}
+        for _, row in df.iterrows():
+            sym = str(row['TckrSymb']).strip()
+            lookup[sym] = {
+                'open': float(row['OpnPric']),
+                'high': float(row['HghPric']),
+                'low': float(row['LwPric']),
+                'close': float(row['ClsPric']),
+                'ltp': float(row['LastPric']),
+                'volume': int(row['TtlTradgVol']),
+            }
         return lookup
     except Exception as e:
         logger.error(f"Error parsing Bhavcopy ZIP: {e}")

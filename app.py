@@ -4,7 +4,6 @@ import scanner
 import data_loader
 import pytz
 import logging
-import time
 from datetime import datetime
 
 # --- LOG CAPTURE FOR UI ---
@@ -12,18 +11,15 @@ log_lines = []
 
 class StreamlitLogHandler(logging.Handler):
     def emit(self, record):
-        log_lines.append(self.format(record))
+        msg = self.format(record)
+        log_lines.append(msg)
 
-# Install handler exactly once per process (avoids duplicate handlers on Streamlit reruns)
-_LOG_HANDLER_INSTALLED = "_cpr_log_handler_installed"
-if not getattr(logging.getLogger('scanner'), _LOG_HANDLER_INSTALLED, False):
-    log_handler = StreamlitLogHandler()
-    log_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-    log_handler.setLevel(logging.INFO)
-    for name in ['scanner', 'data_loader']:
-        lg = logging.getLogger(name)
-        lg.addHandler(log_handler)
-    setattr(logging.getLogger('scanner'), _LOG_HANDLER_INSTALLED, True)
+log_handler = StreamlitLogHandler()
+log_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+log_handler.setLevel(logging.INFO)
+for name in ['scanner', 'data_loader']:
+    lg = logging.getLogger(name)
+    lg.addHandler(log_handler)
 
 # --- UI CONFIGURATION ---
 st.set_page_config(page_title="NSE CPR Scanner", layout="wide", page_icon="📈")
@@ -32,11 +28,7 @@ hide_st_style = '''
 <style>
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-header {visibility: hidden;}
 .stDeployButton {display: none !important;}
-[data-testid="stToolbar"] {display: none !important;}
-[data-testid="stDecoration"] {display: none !important;}
-#stDecoration {display: none !important;}
 </style>
 '''
 st.markdown(hide_st_style, unsafe_allow_html=True)
@@ -97,7 +89,7 @@ selected_timeframe = st.sidebar.selectbox("Timeframe (Interval)", timeframe_opti
 st.sidebar.markdown("---")
 st.sidebar.subheader("📡 Data Source")
 data_source_options = ["yflib", "yfapi"]
-selected_data_source = st.sidebar.selectbox("Data Fetch Method", data_source_options, index=1)
+selected_data_source = st.sidebar.selectbox("Data Fetch Method", data_source_options, index=0)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 CPR Close Baseline")
@@ -123,20 +115,16 @@ if "cpr_method" not in st.session_state.scan_metadata:
     st.session_state.scan_metadata["cpr_method"] = selected_cpr_method
 if "target_session" not in st.session_state.scan_metadata:
     st.session_state.scan_metadata["target_session"] = target_session_val
-if "data_source" not in st.session_state.scan_metadata:
-    st.session_state.scan_metadata["data_source"] = selected_data_source
 
 if (selected_universe != st.session_state.scan_metadata["universe"] or
     selected_timeframe != st.session_state.scan_metadata["timeframe"] or
     selected_cpr_method != st.session_state.scan_metadata.get("cpr_method") or
-    target_session_val != st.session_state.scan_metadata.get("target_session") or
-    selected_data_source != st.session_state.scan_metadata.get("data_source")):
+    target_session_val != st.session_state.scan_metadata.get("target_session")):
     st.session_state.results_df = None
     st.session_state.scan_metadata["universe"] = selected_universe
     st.session_state.scan_metadata["timeframe"] = selected_timeframe
     st.session_state.scan_metadata["cpr_method"] = selected_cpr_method
     st.session_state.scan_metadata["target_session"] = target_session_val
-    st.session_state.scan_metadata["data_source"] = selected_data_source
 
 st.sidebar.markdown("---")
 
@@ -161,7 +149,7 @@ else:
 st.info(f"**Scanning**: {selected_universe} | **Symbols**: {len(symbols)} | **Interval**: {selected_timeframe} | **CPR target**: {selected_session}")
 
 # --- EXECUTION ---
-if st.button("🚀 Start Market Scan", use_container_width=True):
+if st.button("🚀 Start Market Scan", width="stretch"):
     if not symbols:
         st.error("No valid symbols found.")
     else:
@@ -169,7 +157,7 @@ if st.button("🚀 Start Market Scan", use_container_width=True):
             "yflib": "yfinance",
             "yfapi": "yahoo",
         }
-        data_loader.set_data_source(ds_map.get(selected_data_source, "yahoo"))
+        data_loader.set_data_source(ds_map.get(selected_data_source, "yfinance"))
 
         progress_bar = st.progress(0, text="Initializing scan...")
 
@@ -187,6 +175,7 @@ if st.button("🚀 Start Market Scan", use_container_width=True):
             """, unsafe_allow_html=True)
 
         with st.spinner(f"Scanning {len(symbols)} stocks on {selected_timeframe} timeframe..."):
+            import time
             t0 = time.time()
             results_df = scanner.scan_market(
                 symbols,
@@ -201,10 +190,7 @@ if st.button("🚀 Start Market Scan", use_container_width=True):
             progress_bar.empty()
 
             if not results_df.empty:
-                st.session_state.results_df = results_df.sort_values(
-                    by='Signal Time', ascending=False,
-                    key=lambda col: pd.to_datetime(col, format='%d-%m-%Y %H:%M', errors='coerce')
-                )
+                st.session_state.results_df = results_df.sort_values(by='Signal Time', ascending=False)
                 total_stocks = results_df['Stock Name'].nunique()
                 if 'CPR_Position' in results_df.columns:
                     above = len(results_df[results_df['CPR_Position'].str.contains('ABOVE', na=False)])
@@ -238,13 +224,11 @@ if st.session_state.results_df is not None:
         all_results_df = st.session_state.results_df.copy()
         full_df = all_results_df.copy()
 
-        # Apply filter — use pd.to_numeric for safe numeric comparison
+        # Apply filter
         if signal_filter == "Narrow CPR (ATR<0.50)":
-            ratio = pd.to_numeric(full_df['CPR_ATR_Ratio'], errors='coerce')
-            full_df = full_df[ratio < 0.50]
+            full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) < 0.50 if x != '' else False)]
         elif signal_filter == "Wide CPR (ATR>1.00)":
-            ratio = pd.to_numeric(full_df['CPR_ATR_Ratio'], errors='coerce')
-            full_df = full_df[ratio > 1.00]
+            full_df = full_df[full_df['CPR_ATR_Ratio'].apply(lambda x: float(x) > 1.00 if x != '' else False)]
         elif signal_filter == "Above TC (Bullish)" and 'CPR_Position' in full_df.columns:
             full_df = full_df[full_df['CPR_Position'].str.contains('ABOVE', na=False)]
         elif signal_filter == "Below BC (Bearish)" and 'CPR_Position' in full_df.columns:
@@ -252,16 +236,11 @@ if st.session_state.results_df is not None:
         elif signal_filter == "Inside CPR (Neutral)" and 'CPR_Position' in full_df.columns:
             full_df = full_df[full_df['CPR_Position'].str.contains('INSIDE', na=False)]
 
-        # Show last date only in table — guard against all-NaT
+        # Show last date only in table
         if 'Signal Time' in full_df.columns and not full_df['Signal Time'].isna().all():
             signal_dates = pd.to_datetime(full_df['Signal Time'], errors='coerce', dayfirst=True)
-            max_ts = signal_dates.max()
-            if pd.isna(max_ts):
-                display_df = full_df.copy()
-                last_date = None
-            else:
-                last_date = max_ts.date()
-                display_df = full_df[signal_dates.dt.date == last_date].copy()
+            last_date = signal_dates.max().date()
+            display_df = full_df[signal_dates.dt.date == last_date].copy()
         else:
             display_df = full_df.copy()
             last_date = None
@@ -362,12 +341,12 @@ if st.session_state.results_df is not None:
                     "CPR_S3": st.column_config.NumberColumn("S3", format="%.2f", help="Support 3 = L - 2*(H - PP)"),
                 },
                 hide_index=True,
-                use_container_width=True
+                width="stretch"
             )
 
             # Download button
             csv = full_df.to_csv(index=False).encode('utf-8')
-            st.download_button(f"📥 Download Full Data ({len(full_df)} rows)", csv, "cpr_scan_full.csv", "text/csv", use_container_width=True)
+            st.download_button(f"📥 Download Full Data ({len(full_df)} rows)", csv, "cpr_scan_full.csv", "text/csv", width="stretch")
 
 # --- COLUMN DESCRIPTIONS ---
 st.markdown("---")

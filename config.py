@@ -14,10 +14,6 @@ SCAN_UNIVERSE = os.environ.get("SCAN_UNIVERSE", "Nifty 500")
 SCAN_INTERVAL = os.environ.get("SCAN_INTERVAL", "1h")
 SEND_IF_EMPTY = os.environ.get("SEND_IF_EMPTY", "True").lower() == "true"
 
-# --- CPR CALCULATION METHOD ---
-CLOSE_METHOD = os.environ.get("CLOSE_METHOD", "Official Exchange LTP (Bhavcopy)")
-TARGET_SESSION = os.environ.get("TARGET_SESSION", "Next Session")
-
 # --- STRATEGY THRESHOLDS ---
 STRATEGY_CONFIG = {
     "EMA": [5, 9, 21],          # EMA lengths for price comparison
