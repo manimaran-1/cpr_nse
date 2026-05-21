@@ -8,7 +8,6 @@ import requests
 from dotenv import load_dotenv
 import scanner
 import data_loader
-import reporter
 
 # Load .env file if present (local dev)
 load_dotenv()
@@ -28,6 +27,7 @@ SCAN_INTERVAL = os.environ.get("SCAN_INTERVAL", "1h")
 SEND_IF_EMPTY = os.environ.get("SEND_IF_EMPTY", "True").lower() == "true"
 CLOSE_METHOD = os.environ.get("CLOSE_METHOD", "Intraday Candle Close")
 TARGET_SESSION = os.environ.get("TARGET_SESSION", "Current Session")
+INCLUDE_INTRADAY = os.environ.get("INCLUDE_INTRADAY", "false").lower() == "true"
 
 def validate_config():
     """Ensure all required configuration is present."""
@@ -121,37 +121,36 @@ def run_scan():
             f"⏰ Timeframe: {SCAN_INTERVAL}\n"
             f"📈 Close: {CLOSE_METHOD}\n"
             f"🎯 Target: {TARGET_SESSION}\n"
+            f"📐 Intraday: {'ON' if INCLUDE_INTRADAY else 'OFF'}\n"
             f"🔢 Symbols: {len(symbols)}"
         )
-        
+
         # Execute scanner
         results_df = scanner.scan_market(symbols, interval=SCAN_INTERVAL,
                                           close_method=CLOSE_METHOD,
-                                          target_session=TARGET_SESSION)
-        
+                                          target_session=TARGET_SESSION,
+                                          include_intraday=INCLUDE_INTRADAY)
+
         if not results_df.empty:
-            results_df = results_df.sort_values(by='Signal Time', ascending=False)
-            
+            # Sort: by Signal Time if intraday mode, else by CPR_ATR_Ratio
+            if 'Signal Time' in results_df.columns:
+                results_df = results_df.sort_values(by='Signal Time', ascending=False)
+            elif 'CPR_ATR_Ratio' in results_df.columns:
+                results_df = results_df.sort_values(by='CPR_ATR_Ratio', ascending=True)
+
             # Use Absolute Path for temporary CSV (Critical for system-level scheduling)
             base_dir = os.path.dirname(os.path.abspath(__file__))
             filename = f"scan_results_{now.strftime('%Y%m%d_%H%M%S')}.csv"
             file_path = os.path.join(base_dir, filename)
-            
+
             results_df.to_csv(file_path, index=False)
-            
-            # Generate Multi-Part Analysis Report
-            report_parts = reporter.generate_report(results_df, SCAN_UNIVERSE, SCAN_INTERVAL)
-            
-            # Send the CSV document with a short, simple caption
+
+            # Send the CSV document only
             simple_title = f"📊 Scan Results: {SCAN_UNIVERSE} ({now.strftime('%H:%M')})"
             send_telegram_document(file_path, simple_title)
-            
-            # Send all report parts as separate text messages
-            for part in report_parts:
-                send_telegram_message(part)
-            
-            logger.info(f"Results sent to Telegram: {len(results_df)} signals.")
-            
+
+            logger.info(f"CSV sent to Telegram: {len(results_df)} signals.")
+
             # Cleanup
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -161,7 +160,6 @@ def run_scan():
                     f"ℹ️ *Scan Completed*\n"
                     f"📊 *Universe:* {SCAN_UNIVERSE}\n"
                     f"⏰ *Timeframe:* {SCAN_INTERVAL}\n"
-                    f"📈 *Market:* Open\n"
                     f"⚠️ No matches found at this time."
                 )
                 send_telegram_message(msg)
