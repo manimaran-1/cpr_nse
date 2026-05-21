@@ -67,6 +67,10 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
         """Replace NaN with default for display columns."""
         return series.fillna(default).values if hasattr(series, 'fillna') else series
 
+    def _safe_num(series):
+        """Keep numeric columns as float, replacing NaN with 0."""
+        return series.fillna(0.0).values if hasattr(series, 'fillna') else series
+
     result_df = pd.DataFrame({
         'Stock Name': symbol,
         'Open': last_day_df['open'].round(2).values,
@@ -76,24 +80,24 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
         'CPR_Position': cpr_position,
         'Signal Time': [t.strftime('%d-%m-%Y %H:%M') for t in timestamps],
         'Volume': last_day_df['volume'].fillna(0).astype(int).values,
-        'Prev_Open': _safe(last_day_cpr['Prev_Open']),
-        'Prev_High': _safe(last_day_cpr['Prev_High']),
-        'Prev_Low': _safe(last_day_cpr['Prev_Low']),
-        'Prev_Close': _safe(last_day_cpr['Prev_Close']),
-        'CPR_PP': _safe(last_day_cpr['CPR_PP']),
-        'CPR_BC': _safe(last_day_cpr['CPR_BC']),
-        'CPR_TC': _safe(last_day_cpr['CPR_TC']),
-        'CPR_Width': _safe(last_day_cpr['CPR_Width']),
-        'CPR_ATR': _safe(last_day_cpr['CPR_ATR']),
-        'CPR_ATR_Ratio': _safe(last_day_cpr['CPR_ATR_Ratio']),
+        'Prev_Open': _safe_num(last_day_cpr['Prev_Open']),
+        'Prev_High': _safe_num(last_day_cpr['Prev_High']),
+        'Prev_Low': _safe_num(last_day_cpr['Prev_Low']),
+        'Prev_Close': _safe_num(last_day_cpr['Prev_Close']),
+        'CPR_PP': _safe_num(last_day_cpr['CPR_PP']),
+        'CPR_BC': _safe_num(last_day_cpr['CPR_BC']),
+        'CPR_TC': _safe_num(last_day_cpr['CPR_TC']),
+        'CPR_Width': _safe_num(last_day_cpr['CPR_Width']),
+        'CPR_ATR': _safe_num(last_day_cpr['CPR_ATR']),
+        'CPR_ATR_Ratio': _safe_num(last_day_cpr['CPR_ATR_Ratio']),
         'CPR_Type': _safe(last_day_cpr['CPR_Type']),
-        'CPR_R1': _safe(last_day_cpr['CPR_R1']),
-        'CPR_R2': _safe(last_day_cpr['CPR_R2']),
-        'CPR_R3': _safe(last_day_cpr['CPR_R3']),
-        'CPR_S1': _safe(last_day_cpr['CPR_S1']),
-        'CPR_S2': _safe(last_day_cpr['CPR_S2']),
-        'CPR_S3': _safe(last_day_cpr['CPR_S3']),
-        'Prev_Volume': _safe(last_day_cpr['Prev_Volume']),
+        'CPR_R1': _safe_num(last_day_cpr['CPR_R1']),
+        'CPR_R2': _safe_num(last_day_cpr['CPR_R2']),
+        'CPR_R3': _safe_num(last_day_cpr['CPR_R3']),
+        'CPR_S1': _safe_num(last_day_cpr['CPR_S1']),
+        'CPR_S2': _safe_num(last_day_cpr['CPR_S2']),
+        'CPR_S3': _safe_num(last_day_cpr['CPR_S3']),
+        'Prev_Volume': _safe_num(last_day_cpr['Prev_Volume']),
     })
 
     return result_df.to_dict('records')
