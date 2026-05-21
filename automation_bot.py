@@ -5,10 +5,13 @@ import logging
 from datetime import datetime
 import pandas as pd
 import requests
+from dotenv import load_dotenv
 import scanner
 import data_loader
-import config
 import reporter
+
+# Load .env file if present (local dev)
+load_dotenv()
 
 # Configuration for logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -18,11 +21,11 @@ logger = logging.getLogger(__name__)
 IST = pytz.timezone('Asia/Kolkata')
 
 # Secure Configuration from Secrets / Env Vars
-BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
-CHAT_ID = config.TELEGRAM_CHAT_ID
-SCAN_UNIVERSE = config.SCAN_UNIVERSE
-SCAN_INTERVAL = config.SCAN_INTERVAL
-SEND_IF_EMPTY = config.SEND_IF_EMPTY
+BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+SCAN_UNIVERSE = os.environ.get("SCAN_UNIVERSE", "Nifty 500")
+SCAN_INTERVAL = os.environ.get("SCAN_INTERVAL", "1h")
+SEND_IF_EMPTY = os.environ.get("SEND_IF_EMPTY", "True").lower() == "true"
 CLOSE_METHOD = os.environ.get("CLOSE_METHOD", "Intraday Candle Close")
 TARGET_SESSION = os.environ.get("TARGET_SESSION", "Current Session")
 
