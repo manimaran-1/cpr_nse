@@ -10,11 +10,14 @@ logger = logging.getLogger(__name__)
 IST = pytz.timezone('Asia/Kolkata')
 
 
-def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Close", bhavcopy_lookup=None, target_session="Current Session"):
+def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Close",
+                     bhavcopy_lookup=None, target_session="Current Session",
+                     include_intraday=False):
     """
     CPR-only scanner — computes ATR-Normalized CPR levels + S/R.
-    Returns all candles from the last trading day.
-    daily_df: daily OHLC data for accurate CPR calculation (avoids hourly aggregation mismatch)
+
+    include_intraday=False (default): 1 row per stock with CPR levels only.
+    include_intraday=True: All candles from last trading day with OHLC/Position/Volume.
     """
     if df.empty or len(df) < 20:
         return []
@@ -60,9 +63,6 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
         )
     )
 
-    # Build result DataFrame in one shot (no per-row Python loop)
-    timestamps = last_day_df.index
-
     def _safe(series, default=''):
         """Replace NaN with default for display columns."""
         return series.fillna(default).values if hasattr(series, 'fillna') else series
@@ -70,6 +70,49 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
     def _safe_num(series):
         """Keep numeric columns as float, replacing NaN with 0."""
         return series.fillna(0.0).values if hasattr(series, 'fillna') else series
+
+    # CPR-level columns (always present, 1 row per stock)
+    cpr_row = {
+        'Stock Name': symbol,
+        'Prev_Open': _safe_num(last_day_cpr['Prev_Open'])[0] if len(last_day_cpr) else 0,
+        'Prev_High': _safe_num(last_day_cpr['Prev_High'])[0] if len(last_day_cpr) else 0,
+        'Prev_Low': _safe_num(last_day_cpr['Prev_Low'])[0] if len(last_day_cpr) else 0,
+        'Prev_Close': _safe_num(last_day_cpr['Prev_Close'])[0] if len(last_day_cpr) else 0,
+        'CPR_PP': _safe_num(last_day_cpr['CPR_PP'])[0] if len(last_day_cpr) else 0,
+        'CPR_BC': _safe_num(last_day_cpr['CPR_BC'])[0] if len(last_day_cpr) else 0,
+        'CPR_TC': _safe_num(last_day_cpr['CPR_TC'])[0] if len(last_day_cpr) else 0,
+        'CPR_Width': _safe_num(last_day_cpr['CPR_Width'])[0] if len(last_day_cpr) else 0,
+        'CPR_ATR': _safe_num(last_day_cpr['CPR_ATR'])[0] if len(last_day_cpr) else 0,
+        'CPR_ATR_Ratio': _safe_num(last_day_cpr['CPR_ATR_Ratio'])[0] if len(last_day_cpr) else 0,
+        'CPR_Type': _safe(last_day_cpr['CPR_Type'])[0] if len(last_day_cpr) else '',
+        'CPR_R1': _safe_num(last_day_cpr['CPR_R1'])[0] if len(last_day_cpr) else 0,
+        'CPR_R2': _safe_num(last_day_cpr['CPR_R2'])[0] if len(last_day_cpr) else 0,
+        'CPR_R3': _safe_num(last_day_cpr['CPR_R3'])[0] if len(last_day_cpr) else 0,
+        'CPR_S1': _safe_num(last_day_cpr['CPR_S1'])[0] if len(last_day_cpr) else 0,
+        'CPR_S2': _safe_num(last_day_cpr['CPR_S2'])[0] if len(last_day_cpr) else 0,
+        'CPR_S3': _safe_num(last_day_cpr['CPR_S3'])[0] if len(last_day_cpr) else 0,
+        'Prev_Volume': _safe_num(last_day_cpr['Prev_Volume'])[0] if len(last_day_cpr) else 0,
+    }
+
+    if not include_intraday:
+        # Default: 1 row per stock, CPR levels + last close position
+        last_close = close_vals[-1]
+        last_tc = cpr_tc[-1] if len(cpr_tc) else np.nan
+        last_bc = cpr_bc[-1] if len(cpr_bc) else np.nan
+        if not np.isnan(last_tc) and last_close > last_tc:
+            pos = "ABOVE TC (Bullish)"
+        elif not np.isnan(last_bc) and last_close < last_bc:
+            pos = "BELOW BC (Bearish)"
+        elif not np.isnan(last_tc) and not np.isnan(last_bc):
+            pos = "INSIDE CPR (Neutral)"
+        else:
+            pos = ""
+        cpr_row['Close'] = round(float(last_close), 2)
+        cpr_row['CPR_Position'] = pos
+        return [cpr_row]
+
+    # include_intraday=True: All candles with OHLC/Position/Volume
+    timestamps = last_day_df.index
 
     result_df = pd.DataFrame({
         'Stock Name': symbol,
@@ -103,7 +146,7 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
     return result_df.to_dict('records')
 
 
-def scan_market(symbols, interval='1d', progress_callback=None, close_method="Intraday Candle Close", target_session="Current Session"):
+def scan_market(symbols, interval='1d', progress_callback=None, close_method="Intraday Candle Close", target_session="Current Session", include_intraday=False):
     """
     CPR Scanner — fetches data and computes ATR-Normalized CPR for all stocks.
     Fetches daily OHLC separately for accurate CPR levels.
@@ -194,7 +237,8 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
                 daily_df=daily_df,
                 close_method=close_method,
                 bhavcopy_lookup=bhavcopy_lookup,
-                target_session=target_session
+                target_session=target_session,
+                include_intraday=include_intraday
             )
             if results:
                 all_results.extend(results)
