@@ -107,6 +107,11 @@ selected_session = st.sidebar.selectbox("Projected Session Target", session_opti
 target_session_val = "Next Session" if "Next" in selected_session else "Current Session"
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("📐 Intraday Candles")
+include_intraday = st.sidebar.checkbox("Include intraday candle columns (Open/High/Low/Close/Position/Time/Volume per candle)", value=False)
+st.sidebar.caption("Default OFF: 1 row per stock with CPR levels only. ON: multiple rows per stock per candle.")
+
+st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Filter")
 filter_options = ["All Stocks", "Narrow CPR (ATR<0.50)", "Wide CPR (ATR>1.00)", "Above TC (Bullish)", "Below BC (Bearish)", "Inside CPR (Neutral)"]
 signal_filter = st.sidebar.selectbox("Show", filter_options, index=0)
@@ -119,12 +124,14 @@ if "target_session" not in st.session_state.scan_metadata:
 if (selected_universe != st.session_state.scan_metadata["universe"] or
     selected_timeframe != st.session_state.scan_metadata["timeframe"] or
     selected_cpr_method != st.session_state.scan_metadata.get("cpr_method") or
-    target_session_val != st.session_state.scan_metadata.get("target_session")):
+    target_session_val != st.session_state.scan_metadata.get("target_session") or
+    include_intraday != st.session_state.scan_metadata.get("include_intraday", False)):
     st.session_state.results_df = None
     st.session_state.scan_metadata["universe"] = selected_universe
     st.session_state.scan_metadata["timeframe"] = selected_timeframe
     st.session_state.scan_metadata["cpr_method"] = selected_cpr_method
     st.session_state.scan_metadata["target_session"] = target_session_val
+    st.session_state.scan_metadata["include_intraday"] = include_intraday
 
 st.sidebar.markdown("---")
 
@@ -182,7 +189,8 @@ if st.button("🚀 Start Market Scan", width="stretch"):
                 interval=selected_timeframe,
                 progress_callback=update_progress,
                 close_method=selected_cpr_method,
-                target_session=target_session_val
+                target_session=target_session_val,
+                include_intraday=include_intraday
             )
             elapsed = time.time() - t0
 
@@ -298,10 +306,11 @@ if st.session_state.results_df is not None:
                     return "background-color: #e65100; color: white;"
                 return ""
 
-            display_cols = ['Stock Name', 'Open', 'High', 'Low', 'Close', 'CPR_Position', 'Signal Time', 'Volume',
-                           'Prev_Open', 'Prev_High', 'Prev_Low', 'Prev_Close', 'Prev_Volume',
+            display_cols = ['Stock Name', 'CPR_Date', 'Close', 'CPR_Position',
                            'CPR_PP', 'CPR_BC', 'CPR_TC', 'CPR_Width', 'CPR_ATR', 'CPR_ATR_Ratio', 'CPR_Type',
-                           'CPR_R1', 'CPR_R2', 'CPR_R3', 'CPR_S1', 'CPR_S2', 'CPR_S3']
+                           'CPR_R1', 'CPR_R2', 'CPR_R3', 'CPR_S1', 'CPR_S2', 'CPR_S3',
+                           'Prev_Open', 'Prev_High', 'Prev_Low', 'Prev_Close', 'Prev_Volume',
+                           'Open', 'High', 'Low', 'Signal Time', 'Volume']
             display_cols = [c for c in display_cols if c in show_df.columns]
             other_cols = [c for c in show_df.columns if c not in display_cols]
             ordered_cols = display_cols + other_cols
@@ -510,3 +519,204 @@ if "scan_logs" in st.session_state and st.session_state.scan_logs:
                 st.text(line)
 else:
     st.caption("Logs will appear here after a scan completes.")
+
+# ============================================================
+# HELP SECTION — Sidebar Options Guide + Trade Entry Guide
+# ============================================================
+st.markdown("---")
+st.markdown("## 📖 Help & Guide")
+
+with st.expander("🔧 Sidebar Options — What Each Option Does", expanded=False):
+    st.markdown("""
+### Market Universe
+Select which stocks to scan:
+- **Total Cash Segment** — All NSE-listed equities (~2300+ stocks). Use for comprehensive screening.
+- **Nifty 500** — Top 500 stocks by market cap. Good balance of coverage and speed.
+- **Nifty 200** — Top 200 stocks. Faster scans, large-cap focused.
+- **Nifty 50** — Top 50 blue-chip stocks. Fastest scan, highest liquidity.
+- **Custom List** — Enter your own symbols (comma-separated, e.g. `RELIANCE, TCS, INFY`).
+
+### Timeframe (Interval)
+Candle interval for intraday analysis:
+- **15m** — 15-minute candles. Best for intraday CPR trading (recommended).
+- **1h** — 1-hour candles. Good for swing trades within the day.
+- **5m** — 5-minute candles. Very granular, more noise.
+- **1d** — Daily candles. For positional/swing trading.
+
+### Data Fetch Method
+Which API to use for fetching OHLCV data:
+- **yflib** — yfinance library. More reliable, slower (4+ requests per symbol).
+- **yfapi** — Direct Yahoo Finance API. Faster (1 request per symbol), may rate-limit.
+
+### CPR Close Baseline
+How to determine the "Close" price used in CPR calculation:
+- **Intraday Candle Close** — Uses the last intraday candle's close. Most accurate during market hours.
+- **Official Exchange LTP (Bhavcopy)** — Uses NSE's official closing price from Bhavcopy. Best for post-market analysis.
+- **Without Correction (Standard EOD Close)** — Uses Yahoo Finance's daily close. Simplest, may differ slightly.
+
+### CPR Target Session
+Which session's CPR levels to calculate:
+- **Current Session (Today's CPR)** — CPR levels for today, based on yesterday's OHLC.
+- **Next Session (Tomorrow's CPR)** — CPR levels for tomorrow, based on today's OHLC. Use after 3 PM to plan next day trades.
+
+### Signal Filter
+Post-scan filter to focus on specific setups:
+- **All Stocks** — Show everything.
+- **Narrow CPR (ATR<0.50)** — Tight ranges = potential breakout candidates.
+- **Wide CPR (ATR>1.00)** — Wide ranges = volatile, avoid or fade.
+- **Above TC (Bullish)** — Price above Top Central = bullish bias.
+- **Below BC (Bearish)** — Price below Bottom Central = bearish bias.
+- **Inside CPR (Neutral)** — Price inside CPR = consolidation, wait for breakout.
+""")
+
+with st.expander("📊 Understanding CPR Columns", expanded=False):
+    st.markdown("""
+### CPR Levels
+| Column | Description |
+|--------|-------------|
+| **CPR_PP** | Pivot Point = (H + L + C) / 3 |
+| **CPR_BC** | Bottom Central = (H + L) / 2 |
+| **CPR_TC** | Top Central = 2 × PP − BC |
+| **CPR_Width** | Distance between TC and BC |
+| **CPR_ATR** | ATR(14) from daily data |
+| **CPR_ATR_Ratio** | Width / ATR — normalized width. Lower = tighter range |
+| **CPR_Type** | Classification: EXTREME NARROW / VERY NARROW / NARROW / NORMAL / WIDE / VERY WIDE |
+
+### Support/Resistance Levels
+| Column | Formula | Description |
+|--------|---------|-------------|
+| **CPR_R1** | 2 × PP − L | First resistance |
+| **CPR_R2** | PP + (H − L) | Second resistance |
+| **CPR_R3** | H + 2 × (PP − L) | Third resistance |
+| **CPR_S1** | 2 × PP − H | First support |
+| **CPR_S2** | PP − (H − L) | Second support |
+| **CPR_S3** | L − 2 × (H − PP) | Third support |
+
+### Position
+| Value | Meaning |
+|-------|---------|
+| **ABOVE TC (Bullish)** | Price closed above Top Central — bullish bias |
+| **BELOW BC (Bearish)** | Price closed below Bottom Central — bearish bias |
+| **INSIDE CPR (Neutral)** | Price inside CPR range — consolidation, wait for breakout |
+""")
+
+with st.expander("🎯 CPR Trade Entry Guide", expanded=False):
+    st.markdown("""
+## The 5 Core CPR Entry Strategies
+
+### 1. Breakout Entry (Most Common — 60% of trades)
+
+**Bullish Breakout (Price above TC):**
+```
+PRE-MARKET:
+✓ CPR Width < 0.15% (Narrow CPR)
+✓ ATR Ratio < 0.40
+✓ No major resistance within 2% above TC
+
+ENTRY:
+✓ Stock opens above TC
+✓ First 15-min candle closes above TC
+✓ Volume > 1.5× average
+✓ Second candle breaks first candle high → ENTER LONG
+
+STOP LOSS: Below BC or first candle low
+TARGETS: T1 = R1, T2 = R2, T3 = Trail
+```
+
+**Bearish Breakdown (Price below BC):**
+```
+✓ Opens below BC
+✓ First 15-min candle closes below BC
+✓ Volume spike
+✓ Second candle breaks first candle low → ENTER SHORT
+
+STOP LOSS: Above TC
+TARGETS: T1 = S1, T2 = S2
+```
+
+---
+
+### 2. Rejection/Reversal Entry (35% of trades, 70-80% success)
+
+```
+SETUP: Price tests CPR level and rejects
+✓ Price approaches BC from below, forms wicks
+✓ 2-3 rejection candles at BC (long lower wicks)
+✓ Bullish engulfing or hammer at BC
+✓ Volume increasing on bounce
+
+ENTRY: When rejection candle closes above previous high
+STOP: Below lowest rejection wick
+TARGET: Pivot → TC → R1
+```
+
+---
+
+### 3. Retest Entry (Highest accuracy — 80-85% win rate)
+
+```
+SEQUENCE:
+1. Price breaks CPR decisively
+2. Moves away from CPR
+3. Returns to retest broken level as support/resistance
+4. Bounces → ENTER on bounce confirmation
+
+ENTRY: When price touches TC (now support) and bounces
+STOP: Below retest low with buffer
+TARGET: Previous high → R1 → R2
+```
+
+---
+
+### 4. Inside CPR Entry (Advanced — avoid for beginners)
+
+```
+✓ Only when CPR Width < 0.10%
+✓ Higher timeframe trend alignment
+✓ Wait for breakout from CPR
+✓ Enter on breakout confirmation
+```
+
+---
+
+### 5. Gap Entry (Special conditions)
+
+```
+✓ Gap up 2%+ above TC → Momentum entry or wait for gap fill
+✓ Gap down 2%+ below BC → Short or wait for gap fill
+✓ Must have volume confirmation
+```
+
+---
+
+### Position Sizing Formula
+```
+Risk Amount = Account × 2% (max risk per trade)
+Risk Per Share = Entry Price − Stop Loss
+Quantity = Risk Amount / Risk Per Share
+
+Example:
+Account = ₹1,00,000
+Entry = ₹2,472, SL = ₹2,460
+Risk = ₹2,000 / ₹12 = 166 shares → Round to 150
+```
+
+### Best Entry Times (IST)
+```
+🟢 9:30 - 10:30 AM — Best for breakouts (success: 65-75%)
+🟡 10:30 - 11:30 AM — Good for retest entries (60-70%)
+🟡 2:00 - 3:00 PM — Trend continuation (55-65%)
+🔴 AVOID: 9:15-9:25 (volatile), 12-1:30 (lunch lull)
+```
+
+### Entry Checklist
+```
+☐ CPR Width < 0.15%
+☐ Volume > 1.5× average
+☐ Clean candle (body > 60%)
+☐ RSI aligned (>50 long, <50 short)
+☐ Stop loss placed immediately
+☐ Risk < 2% of capital
+☐ R:R > 1:1.5
+```
+""")
