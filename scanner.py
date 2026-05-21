@@ -71,9 +71,24 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
         """Keep numeric columns as float, replacing NaN with 0."""
         return series.fillna(0.0).values if hasattr(series, 'fillna') else series
 
+    # Determine CPR reference date (which date's OHLC was used for CPR)
+    if daily_df is not None and not daily_df.empty:
+        daily_dates = sorted(set(daily_df.index.date))
+        if target_session == "Next Session":
+            cpr_ref_date = daily_dates[-1] if daily_dates else last_date
+        else:
+            cpr_ref_date = daily_dates[-2] if len(daily_dates) >= 2 else daily_dates[-1]
+    else:
+        intra_dates = sorted(set(df.index.date))
+        if target_session == "Next Session":
+            cpr_ref_date = intra_dates[-1] if intra_dates else last_date
+        else:
+            cpr_ref_date = intra_dates[-2] if len(intra_dates) >= 2 else intra_dates[-1]
+
     # CPR-level columns (always present, 1 row per stock)
     cpr_row = {
         'Stock Name': symbol,
+        'CPR_Date': cpr_ref_date.strftime('%d-%m-%Y') if hasattr(cpr_ref_date, 'strftime') else str(cpr_ref_date),
         'Prev_Open': _safe_num(last_day_cpr['Prev_Open'])[0] if len(last_day_cpr) else 0,
         'Prev_High': _safe_num(last_day_cpr['Prev_High'])[0] if len(last_day_cpr) else 0,
         'Prev_Low': _safe_num(last_day_cpr['Prev_Low'])[0] if len(last_day_cpr) else 0,
@@ -116,6 +131,7 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
 
     result_df = pd.DataFrame({
         'Stock Name': symbol,
+        'CPR_Date': cpr_ref_date.strftime('%d-%m-%Y') if hasattr(cpr_ref_date, 'strftime') else str(cpr_ref_date),
         'Open': last_day_df['open'].round(2).values,
         'High': last_day_df['high'].round(2).values,
         'Low': last_day_df['low'].round(2).values,
