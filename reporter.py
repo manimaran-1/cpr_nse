@@ -51,7 +51,11 @@ def _cpr_stock_line(row):
     else:
         pos_icon = '⚪'
 
-    line = f"{pos_icon} *{name}* ₹{close} | {cpr_type} | ATR:{ratio:.2f}"
+    try:
+        ratio_str = f"{float(ratio):.2f}" if ratio and str(ratio) != 'nan' else "N/A"
+    except (ValueError, TypeError):
+        ratio_str = "N/A"
+    line = f"{pos_icon} *{name}* ₹{close} | {cpr_type} | ATR:{ratio_str}"
     line += f" | Vol:{format_volume(vol)}"
 
     # Add CPR levels
@@ -93,6 +97,13 @@ def generate_report(df, universe, timeframe):
     # Deduplicate: keep latest candle per stock
     df_work = df.copy()
     unique_df = df_work.sort_values('Signal Time', ascending=False).drop_duplicates(subset='Stock Name')
+
+    # Ensure numeric columns are numeric (defensive — scanner should already handle this)
+    for col in ['CPR_ATR_Ratio', 'CPR_PP', 'CPR_BC', 'CPR_TC', 'CPR_Width', 'CPR_ATR',
+                'CPR_R1', 'CPR_R2', 'CPR_R3', 'CPR_S1', 'CPR_S2', 'CPR_S3',
+                'Prev_Open', 'Prev_High', 'Prev_Low', 'Prev_Close', 'Volume', 'Close']:
+        if col in unique_df.columns:
+            unique_df[col] = pd.to_numeric(unique_df[col], errors='coerce')
 
     total_found = len(df)
     unique_stocks = len(unique_df)
