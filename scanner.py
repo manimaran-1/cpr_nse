@@ -165,39 +165,47 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
 def scan_market(symbols, interval='1d', progress_callback=None, close_method="Intraday Candle Close", target_session="Current Session", include_intraday=False):
     """
     CPR Scanner — fetches data and computes ATR-Normalized CPR for all stocks.
-    Fetches daily OHLC separately for accurate CPR levels.
+
+    include_intraday=False (default): Only fetches daily OHLC. ~50% faster.
+    include_intraday=True: Fetches both intraday + daily OHLC.
     """
     import time as _time
     t0 = _time.time()
     all_results = []
     total = len(symbols)
 
-    # Wrapper: progress_callback(completed, total) but fetch_data_batch sends (done, total, label)
-    # Map: Phase 1 → 0-40%, Phase 1b → 40-70%, Phase 2 → 70-100%
     def _fetch_progress(done, total_fetch, label=""):
         if progress_callback:
             if label == "daily":
-                pct = 0.4 + 0.3 * min(done / total_fetch, 1.0)
+                pct = 0.5 * min(done / total_fetch, 1.0)
             else:
-                pct = 0.4 * min(done / total_fetch, 1.0)
+                pct = 0.5 * min(done / total_fetch, 1.0)
             progress_callback(int(pct * total), total)
 
-    # === PHASE 1: BATCH DATA PREFETCH ===
-    logger.info(f"Phase 1: Pre-fetching {total} symbols ({interval})...")
-    t1 = _time.time()
-    data_cache = data_loader.fetch_data_batch(symbols, interval=interval, max_workers=4,
-                                              progress_callback=_fetch_progress, phase_label="intraday")
-    t2 = _time.time()
-    logger.info(f"Phase 1 complete: {len(data_cache)}/{total} symbols in {t2-t1:.1f}s")
-
-    # Fetch daily OHLC for accurate CPR (only if using intraday timeframe)
+    data_cache = {}
     daily_cache = {}
-    if interval in ['1h', '15m', '5m', '1m', '30m']:
+
+    if include_intraday:
+        # === PHASE 1: FETCH INTRADATA ===
+        logger.info(f"Phase 1: Pre-fetching {total} symbols ({interval})...")
+        t1 = _time.time()
+        data_cache = data_loader.fetch_data_batch(symbols, interval=interval, max_workers=4,
+                                                  progress_callback=_fetch_progress, phase_label="intraday")
+        logger.info(f"Phase 1 complete: {len(data_cache)}/{total} symbols in {_time.time()-t1:.1f}s")
+
+        # Also fetch daily OHLC for accurate CPR
         logger.info(f"Phase 1b: Fetching daily OHLC for accurate CPR...")
         t1b = _time.time()
         daily_cache = data_loader.fetch_data_batch(symbols, interval='1d', max_workers=4,
                                                    progress_callback=_fetch_progress, phase_label="daily")
         logger.info(f"Phase 1b complete: {len(daily_cache)}/{total} daily in {_time.time()-t1b:.1f}s")
+    else:
+        # === FAST MODE: DAILY OHLC ONLY (skip intraday fetch) ===
+        logger.info(f"Phase 1: Fetching daily OHLC for {total} symbols (intraday skipped)...")
+        t1 = _time.time()
+        daily_cache = data_loader.fetch_data_batch(symbols, interval='1d', max_workers=4,
+                                                   progress_callback=_fetch_progress, phase_label="daily")
+        logger.info(f"Phase 1 complete: {len(daily_cache)}/{total} daily in {_time.time()-t1:.1f}s")
 
     # === PHASE 2: COMPUTE CPR ===
     logger.info("Phase 2: Computing CPR...")
@@ -240,13 +248,23 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
 
     for sym in symbols:
         try:
-            df = data_cache.get(sym)
-            if df is None or df.empty:
-                skipped_count += 1
-                completed_count += 1
-                continue
+            if include_intraday:
+                # Intraday mode: use intraday data as main, daily for CPR accuracy
+                df = data_cache.get(sym)
+                daily_df = daily_cache.get(sym)
+                if df is None or df.empty:
+                    skipped_count += 1
+                    completed_count += 1
+                    continue
+            else:
+                # Fast mode: use daily data for everything
+                daily_df = daily_cache.get(sym)
+                df = daily_df
+                if df is None or df.empty:
+                    skipped_count += 1
+                    completed_count += 1
+                    continue
 
-            daily_df = daily_cache.get(sym) if daily_cache else None
             results = check_conditions(
                 df,
                 sym,
