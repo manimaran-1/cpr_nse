@@ -10,6 +10,123 @@ logger = logging.getLogger(__name__)
 IST = pytz.timezone('Asia/Kolkata')
 
 
+def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_session):
+    """
+    Fast CPR computation for a single date — avoids iterating all dates.
+    Used when include_intraday=False. Returns a dict with CPR levels.
+    """
+    if daily_df is None or daily_df.empty or len(daily_df) < 2:
+        return None
+
+    # Determine which date's OHLC to use for CPR
+    unique_dates = sorted(set(daily_df.index.date))
+    if target_session == "Next Session":
+        ref_date = unique_dates[-1]
+    else:
+        ref_date = unique_dates[-2] if len(unique_dates) >= 2 else unique_dates[-1]
+
+    # Get ref date row
+    ref_mask = daily_df.index.date == ref_date
+    ref_rows = daily_df[ref_mask]
+    if ref_rows.empty:
+        return None
+
+    ref_row = ref_rows.iloc[0] if len(ref_rows) == 1 else ref_rows.iloc[-1]
+    prev_high = float(ref_row['high'])
+    prev_low = float(ref_row['low'])
+
+    # Resolve close price based on method
+    if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup:
+        clean_sym = symbol.split(':')[1].replace('-EQ', '').strip() if ':' in symbol else symbol
+        if clean_sym in bhavcopy_lookup:
+            prev_close = float(bhavcopy_lookup[clean_sym]['ltp'])
+        else:
+            prev_close = float(ref_row['close'])
+    elif close_method == "Intraday Candle Close":
+        prev_close = float(ref_row['close'])
+    else:
+        prev_close = float(ref_row['close'])
+
+    prev_open = float(ref_row['open'])
+    prev_volume = int(ref_row.get('volume', 0))
+
+    # CPR formulas
+    pp_raw = (prev_high + prev_low + prev_close) / 3
+    bc_raw = (prev_high + prev_low) / 2
+    tc_raw = (2 * pp_raw) - bc_raw
+    if tc_raw < bc_raw:
+        tc_raw, bc_raw = bc_raw, tc_raw
+
+    pp = round(pp_raw, 2)
+    bc = round(bc_raw, 2)
+    tc = round(tc_raw, 2)
+    width = abs(tc - bc)
+
+    # ATR(14) from daily data
+    atr_series = indicators.calculate_atr(daily_df, length=14)
+    atr_val = float(atr_series.iloc[-1]) if not atr_series.empty else 0.0
+    atr_ratio = round(width / atr_val, 4) if atr_val > 0 else 0.0
+
+    # CPR Type classification
+    if atr_ratio < 0.15:
+        cpr_type = "EXTREME NARROW"
+    elif atr_ratio < 0.30:
+        cpr_type = "VERY NARROW"
+    elif atr_ratio < 0.50:
+        cpr_type = "NARROW"
+    elif atr_ratio < 1.00:
+        cpr_type = "NORMAL"
+    elif atr_ratio < 1.50:
+        cpr_type = "SLIGHTLY WIDE"
+    elif atr_ratio < 2.00:
+        cpr_type = "WIDE"
+    else:
+        cpr_type = "VERY WIDE"
+
+    # Support/Resistance
+    r1 = round(2 * pp - prev_low, 2)
+    r2 = round(pp + (prev_high - prev_low), 2)
+    r3 = round(prev_high + 2 * (pp - prev_low), 2)
+    s1 = round(2 * pp - prev_high, 2)
+    s2 = round(pp - (prev_high - prev_low), 2)
+    s3 = round(prev_low - 2 * (prev_high - pp), 2)
+
+    # Last close for position
+    last_close = float(daily_df['close'].iloc[-1])
+
+    if last_close > tc:
+        pos = "ABOVE TC (Bullish)"
+    elif last_close < bc:
+        pos = "BELOW BC (Bearish)"
+    else:
+        pos = "INSIDE CPR (Neutral)"
+
+    return {
+        'Stock Name': symbol,
+        'CPR_Date': ref_date.strftime('%d-%m-%Y'),
+        'Close': round(last_close, 2),
+        'CPR_Position': pos,
+        'Prev_Open': round(prev_open, 2),
+        'Prev_High': round(prev_high, 2),
+        'Prev_Low': round(prev_low, 2),
+        'Prev_Close': round(prev_close, 2),
+        'CPR_PP': pp,
+        'CPR_BC': bc,
+        'CPR_TC': tc,
+        'CPR_Width': round(width, 2),
+        'CPR_ATR': round(atr_val, 2),
+        'CPR_ATR_Ratio': atr_ratio,
+        'CPR_Type': cpr_type,
+        'CPR_R1': r1,
+        'CPR_R2': r2,
+        'CPR_R3': r3,
+        'CPR_S1': s1,
+        'CPR_S2': s2,
+        'CPR_S3': s3,
+        'Prev_Volume': prev_volume,
+    }
+
+
 def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Close",
                      bhavcopy_lookup=None, target_session="Current Session",
                      include_intraday=False):
@@ -19,23 +136,24 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
     include_intraday=False (default): 1 row per stock with CPR levels only.
     include_intraday=True: All candles from last trading day with OHLC/Position/Volume.
     """
+    if not include_intraday:
+        # FAST PATH: compute CPR for single date, no full DataFrame processing
+        result = _fast_cpr_single(daily_df if daily_df is not None and not daily_df.empty else df,
+                                  symbol, close_method, bhavcopy_lookup, target_session)
+        return [result] if result else []
+
+    # === INTRADAY MODE: Full processing ===
     if df.empty or len(df) < 20:
         return []
 
-    # Remove duplicate timestamps
     df = df[~df.index.duplicated(keep='last')]
 
-    # CPR (Central Pivot Range) with ATR normalization — use daily OHLC for accuracy
     cpr_df = indicators.calculate_cpr(
-        df,
-        daily_df=daily_df,
-        symbol=symbol,
-        close_method=close_method,
-        bhavcopy_lookup=bhavcopy_lookup,
+        df, daily_df=daily_df, symbol=symbol,
+        close_method=close_method, bhavcopy_lookup=bhavcopy_lookup,
         target_session=target_session
     )
 
-    # Get all bars from the last date — vectorized
     last_date = df.index[-1].date()
     last_day_mask = df.index.date == last_date
     last_day_df = df[last_day_mask]
@@ -44,7 +162,6 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
     if last_day_df.empty:
         return []
 
-    # Vectorized CPR position calculation
     cpr_tc = last_day_cpr['CPR_TC'].values
     cpr_bc = last_day_cpr['CPR_BC'].values
     close_vals = last_day_df['close'].values
@@ -64,14 +181,11 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
     )
 
     def _safe(series, default=''):
-        """Replace NaN with default for display columns."""
         return series.fillna(default).values if hasattr(series, 'fillna') else series
 
     def _safe_num(series):
-        """Keep numeric columns as float, replacing NaN with 0."""
         return series.fillna(0.0).values if hasattr(series, 'fillna') else series
 
-    # Determine CPR reference date (which date's OHLC was used for CPR)
     if daily_df is not None and not daily_df.empty:
         daily_dates = sorted(set(daily_df.index.date))
         if target_session == "Next Session":
@@ -85,48 +199,6 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
         else:
             cpr_ref_date = intra_dates[-2] if len(intra_dates) >= 2 else intra_dates[-1]
 
-    # CPR-level columns (always present, 1 row per stock)
-    cpr_row = {
-        'Stock Name': symbol,
-        'CPR_Date': cpr_ref_date.strftime('%d-%m-%Y') if hasattr(cpr_ref_date, 'strftime') else str(cpr_ref_date),
-        'Prev_Open': _safe_num(last_day_cpr['Prev_Open'])[0] if len(last_day_cpr) else 0,
-        'Prev_High': _safe_num(last_day_cpr['Prev_High'])[0] if len(last_day_cpr) else 0,
-        'Prev_Low': _safe_num(last_day_cpr['Prev_Low'])[0] if len(last_day_cpr) else 0,
-        'Prev_Close': _safe_num(last_day_cpr['Prev_Close'])[0] if len(last_day_cpr) else 0,
-        'CPR_PP': _safe_num(last_day_cpr['CPR_PP'])[0] if len(last_day_cpr) else 0,
-        'CPR_BC': _safe_num(last_day_cpr['CPR_BC'])[0] if len(last_day_cpr) else 0,
-        'CPR_TC': _safe_num(last_day_cpr['CPR_TC'])[0] if len(last_day_cpr) else 0,
-        'CPR_Width': _safe_num(last_day_cpr['CPR_Width'])[0] if len(last_day_cpr) else 0,
-        'CPR_ATR': _safe_num(last_day_cpr['CPR_ATR'])[0] if len(last_day_cpr) else 0,
-        'CPR_ATR_Ratio': _safe_num(last_day_cpr['CPR_ATR_Ratio'])[0] if len(last_day_cpr) else 0,
-        'CPR_Type': _safe(last_day_cpr['CPR_Type'])[0] if len(last_day_cpr) else '',
-        'CPR_R1': _safe_num(last_day_cpr['CPR_R1'])[0] if len(last_day_cpr) else 0,
-        'CPR_R2': _safe_num(last_day_cpr['CPR_R2'])[0] if len(last_day_cpr) else 0,
-        'CPR_R3': _safe_num(last_day_cpr['CPR_R3'])[0] if len(last_day_cpr) else 0,
-        'CPR_S1': _safe_num(last_day_cpr['CPR_S1'])[0] if len(last_day_cpr) else 0,
-        'CPR_S2': _safe_num(last_day_cpr['CPR_S2'])[0] if len(last_day_cpr) else 0,
-        'CPR_S3': _safe_num(last_day_cpr['CPR_S3'])[0] if len(last_day_cpr) else 0,
-        'Prev_Volume': _safe_num(last_day_cpr['Prev_Volume'])[0] if len(last_day_cpr) else 0,
-    }
-
-    if not include_intraday:
-        # Default: 1 row per stock, CPR levels + last close position
-        last_close = close_vals[-1]
-        last_tc = cpr_tc[-1] if len(cpr_tc) else np.nan
-        last_bc = cpr_bc[-1] if len(cpr_bc) else np.nan
-        if not np.isnan(last_tc) and last_close > last_tc:
-            pos = "ABOVE TC (Bullish)"
-        elif not np.isnan(last_bc) and last_close < last_bc:
-            pos = "BELOW BC (Bearish)"
-        elif not np.isnan(last_tc) and not np.isnan(last_bc):
-            pos = "INSIDE CPR (Neutral)"
-        else:
-            pos = ""
-        cpr_row['Close'] = round(float(last_close), 2)
-        cpr_row['CPR_Position'] = pos
-        return [cpr_row]
-
-    # include_intraday=True: All candles with OHLC/Position/Volume
     timestamps = last_day_df.index
 
     result_df = pd.DataFrame({
