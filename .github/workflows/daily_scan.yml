@@ -22,11 +22,19 @@ on:
           - 15m
           - 1h
           - 1d
+      include_intraday:
+        description: 'Include intraday candle columns (Open/High/Low/Close/Position/Time/Volume per candle)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -54,4 +62,5 @@ jobs:
           SCAN_INTERVAL: ${{ github.event.inputs.interval || '15m' }}
           CLOSE_METHOD: 'Official Exchange LTP (Bhavcopy)'
           TARGET_SESSION: 'Next Session'
+          INCLUDE_INTRADAY: ${{ github.event.inputs.include_intraday || 'false' }}
         run: python automation_bot.py
