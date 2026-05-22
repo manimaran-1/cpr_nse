@@ -81,7 +81,7 @@ st.markdown("ATR-Normalized Central Pivot Range — Works for all price ranges")
 st.sidebar.header("Scan Setup")
 indices_dict = data_loader.get_all_indices_dict()
 universe_options = list(indices_dict.keys()) + ["Custom List"]
-selected_universe = st.sidebar.selectbox("Market Universe", universe_options, index=universe_options.index("Nifty 500") if "Nifty 500" in universe_options else 0)
+selected_universe = st.sidebar.selectbox("Market Universe", universe_options, index=universe_options.index("All Segment (~3200+)") if "All Segment (~3200+)" in universe_options else 0)
 
 timeframe_options = ["1h", "15m", "5m", "1d"]
 selected_timeframe = st.sidebar.selectbox("Timeframe (Interval)", timeframe_options, index=0)
@@ -306,7 +306,7 @@ if st.session_state.results_df is not None:
                     return "background-color: #e65100; color: white;"
                 return ""
 
-            display_cols = ['Stock Name', 'CPR_Date', 'Close', 'CPR_Position',
+            display_cols = ['Stock Name', 'Prev_Day_Date', 'Close', 'CPR_Position',
                            'CPR_PP', 'CPR_BC', 'CPR_TC', 'CPR_Width', 'CPR_ATR', 'CPR_ATR_Ratio', 'CPR_Type',
                            'CPR_R1', 'CPR_R2', 'CPR_R3', 'CPR_S1', 'CPR_S2', 'CPR_S3',
                            'Prev_Open', 'Prev_High', 'Prev_Low', 'Prev_Close', 'Prev_Volume',
