@@ -599,6 +599,27 @@ with st.expander("📊 Understanding CPR Columns", expanded=False):
 | **ABOVE TC (Bullish)** | Price closed above Top Central — bullish bias |
 | **BELOW BC (Bearish)** | Price closed below Bottom Central — bearish bias |
 | **INSIDE CPR (Neutral)** | Price inside CPR range — consolidation, wait for breakout |
+
+### CPR_Type Classification (ATR-Normalized)
+
+The CPR Type is classified based on **CPR_ATR_Ratio** = `CPR_Width / ATR(14)`.
+
+This ratio normalizes the CPR width against the stock's volatility (ATR), making it comparable across different stocks and price levels.
+
+| CPR_Type | ATR_Ratio Range | What It Means | Trading Implication |
+|----------|-----------------|---------------|---------------------|
+| **EXTREME NARROW** | < 0.15 | CPR width is less than 15% of ATR. Extremely tight range. | 🔥 Highest breakout potential. Price is coiled tight. Watch for explosive move. Best setup for breakout entries. |
+| **VERY NARROW** | 0.15 — 0.30 | CPR width is 15-30% of ATR. Very tight consolidation. | 🔥 Strong breakout candidate. Tight range = big potential move. Ideal for narrow CPR strategy. |
+| **NARROW** | 0.30 — 0.50 | CPR width is 30-50% of ATR. Healthy tight range. | ✅ Good breakout setup. Standard narrow CPR trade. R:R ratio favorable. |
+| **NORMAL** | 0.50 — 1.00 | CPR width is 50-100% of ATR. Average range. | ⚪ Default state. No special edge. Trade with trend confirmation. |
+| **SLIGHTLY WIDE** | 1.00 — 1.50 | CPR width equals or exceeds ATR. Wider than normal. | ⚠️ Reduced breakout probability. Consider range-bound strategies. |
+| **WIDE** | 1.50 — 2.00 | CPR width is 1.5-2× the ATR. Wide range. | ⚠️ Choppy/range-bound market. Avoid breakout trades. Fade extremes. |
+| **VERY WIDE** | > 2.00 | CPR width is more than 2× ATR. Extremely wide range. | 🔴 Avoid trading. High volatility, unpredictable. Wait for next session. |
+
+### How to Use This
+- **Narrow CPR (ATR_Ratio < 0.50)** → Look for breakout trades above TC or below BC
+- **Wide CPR (ATR_Ratio > 1.00)** → Avoid breakout trades, consider fading extremes
+- **Compare across stocks** → A stock with ATR_Ratio 0.12 is a tighter setup than one with 0.45, regardless of price
 """)
 
 with st.expander("🎯 CPR Trade Entry Guide", expanded=False):
