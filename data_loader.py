@@ -235,6 +235,23 @@ def get_total_cash_segment():
         logger.error(f"Error fetching Total Cash Segment: {e}")
         return get_nifty500_symbols()
 
+def get_all_segment():
+    """Fetches ALL NSE securities (~3200+) from sec_list.csv (EQ, BE, BZ, SM, ST, etc.)."""
+    try:
+        df = fetch_with_cache(
+            "https://nsearchives.nseindia.com/content/equities/sec_list.csv",
+            "sec_list.csv"
+        )
+        col = 'Symbol' if 'Symbol' in df.columns else 'SYMBOL'
+        symbols = [str(sym).strip() for sym in df[col].tolist()
+                   if "DUMMY" not in str(sym).upper()
+                   and str(sym).strip()
+                   and not str(sym).startswith('NIFTY')]
+        return [f"NSE:{sym}-EQ" for sym in symbols]
+    except Exception as e:
+        logger.error(f"Error fetching All Segment: {e}")
+        return get_total_cash_segment()
+
 def get_index_constituents(index_name):
     """Fetches symbols for a specific index by name (with cache)."""
     if index_name == "Nifty 50":
@@ -245,6 +262,8 @@ def get_index_constituents(index_name):
         return get_nifty500_symbols()
     if index_name == "Total Cash Segment":
         return get_total_cash_segment()
+    if index_name == "All Segment":
+        return get_all_segment()
 
     slugs = {
         "Nifty 100": "nifty100",
@@ -302,6 +321,7 @@ def get_all_indices_dict():
         "Nifty 100": "Nifty 100",
         "Nifty 200": "Nifty 200",
         "Nifty 500": "Nifty 500",
+        "All Segment (~3200+)": "All Segment",
         "Total Cash Segment (~2000+)": "Total Cash Segment",
         "Nifty Bank": "Nifty Bank",
         "Nifty Auto": "Nifty Auto",
