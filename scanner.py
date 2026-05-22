@@ -103,7 +103,7 @@ def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_ses
 
     return {
         'Stock Name': symbol,
-        'CPR_Date': ref_date.strftime('%d-%m-%Y'),
+        'Prev_Day_Date': ref_date.strftime('%d-%m-%Y'),
         'Close': round(last_close, 2),
         'CPR_Position': pos,
         'Prev_Open': round(prev_open, 2),
@@ -203,7 +203,7 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
 
     result_df = pd.DataFrame({
         'Stock Name': symbol,
-        'CPR_Date': cpr_ref_date.strftime('%d-%m-%Y') if hasattr(cpr_ref_date, 'strftime') else str(cpr_ref_date),
+        'Prev_Day_Date': cpr_ref_date.strftime('%d-%m-%Y') if hasattr(cpr_ref_date, 'strftime') else str(cpr_ref_date),
         'Open': last_day_df['open'].round(2).values,
         'High': last_day_df['high'].round(2).values,
         'Low': last_day_df['low'].round(2).values,
