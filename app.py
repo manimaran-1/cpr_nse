@@ -198,7 +198,8 @@ if st.button("🚀 Start Market Scan", width="stretch"):
             progress_bar.empty()
 
             if not results_df.empty:
-                st.session_state.results_df = results_df.sort_values(by='Signal Time', ascending=False)
+                sort_col = 'Signal Time' if 'Signal Time' in results_df.columns else 'CPR_ATR_Ratio'
+                st.session_state.results_df = results_df.sort_values(by=sort_col, ascending=(sort_col != 'Signal Time'))
                 total_stocks = results_df['Stock Name'].nunique()
                 if 'CPR_Position' in results_df.columns:
                     above = len(results_df[results_df['CPR_Position'].str.contains('ABOVE', na=False)])
