@@ -6,9 +6,10 @@ on:
       universe:
         description: 'Stock universe'
         required: false
-        default: 'Total Cash Segment'
+        default: 'All Segment'
         type: choice
         options:
+          - All Segment
           - Total Cash Segment
           - Nifty 500
           - Nifty 200
@@ -34,7 +35,7 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -58,7 +59,7 @@ jobs:
           GITHUB_ACTIONS: 'true'
           ONCE: '1'
           DATA_SOURCE: 'yahoo'
-          SCAN_UNIVERSE: ${{ github.event.inputs.universe || 'Total Cash Segment' }}
+          SCAN_UNIVERSE: ${{ github.event.inputs.universe || 'All Segment' }}
           SCAN_INTERVAL: ${{ github.event.inputs.interval || '15m' }}
           CLOSE_METHOD: 'Official Exchange LTP (Bhavcopy)'
           TARGET_SESSION: 'Next Session'
