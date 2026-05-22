@@ -22,7 +22,7 @@ IST = pytz.timezone('Asia/Kolkata')
 # Secure Configuration from Secrets / Env Vars
 BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
 CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
-SCAN_UNIVERSE = os.environ.get("SCAN_UNIVERSE", "Nifty 500")
+SCAN_UNIVERSE = os.environ.get("SCAN_UNIVERSE", "All Segment")
 SCAN_INTERVAL = os.environ.get("SCAN_INTERVAL", "1h")
 SEND_IF_EMPTY = os.environ.get("SEND_IF_EMPTY", "True").lower() == "true"
 CLOSE_METHOD = os.environ.get("CLOSE_METHOD", "Intraday Candle Close")
@@ -80,29 +80,13 @@ def run_scan():
     """Executes the stock scan and sends results to Telegram."""
     now = datetime.now(IST)
 
-    # === MARKET STATUS CHECK ===
-    if not data_loader.is_market_open():
-        logger.info("Market is closed (weekend/off-hours). Skipping scan.")
-        if SEND_IF_EMPTY:
-            send_telegram_message(
-                f"ℹ️ *Market Closed*\n"
-                f"📊 Status: Weekend/Off-hours\n"
-                f"⏰ {now.strftime('%H:%M %d-%b-%Y')} IST\n"
-                f"⏭️ Next scan during market hours."
-            )
-        return
-
-    # Market Open Sync Guard
-    if now.hour == 9 and 15 <= now.minute < 16:
-        logger.info("Market just opened. Waiting 60s for data synchronization...")
-        time.sleep(60)
-        now = datetime.now(IST)
-
     logger.info(f"Starting Scan: {SCAN_UNIVERSE} ({SCAN_INTERVAL}) | Close: {CLOSE_METHOD} | Target: {TARGET_SESSION}")
 
     try:
         # Resolve symbols
-        if SCAN_UNIVERSE == "Total Cash Segment":
+        if SCAN_UNIVERSE == "All Segment":
+            symbols = data_loader.get_all_segment()
+        elif SCAN_UNIVERSE == "Total Cash Segment":
             symbols = data_loader.get_total_cash_segment()
         elif SCAN_UNIVERSE == "Nifty 500":
             symbols = data_loader.get_nifty500_symbols()
@@ -116,10 +100,10 @@ def run_scan():
             return
 
         send_telegram_message(
-            f"🔍 *NSE Scanner 2.0 Started*\n"
+            f"🔍 *CPR Scanner started v9.0*\n"
             f"📊 Universe: {SCAN_UNIVERSE}\n"
             f"⏰ Timeframe: {SCAN_INTERVAL}\n"
-            f"📈 Close: {CLOSE_METHOD}\n"
+            f"📈 Method: Zerodha CPR\n"
             f"🎯 Target: {TARGET_SESSION}\n"
             f"📐 Intraday: {'ON' if INCLUDE_INTRADAY else 'OFF'}\n"
             f"🔢 Symbols: {len(symbols)}"
