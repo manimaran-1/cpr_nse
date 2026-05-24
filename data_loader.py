@@ -691,11 +691,9 @@ def _parse_dat_file(dat_path):
 
 def load_bhavcopy_lookup(date_val):
     """
-    Downloads NSE DAT file (FCM_INTRM_BC) for the specified date.
-    Published daily at ~6:00 PM IST on nsearchives.nseindia.com.
-
-    Returns:
-        dict: Ticker symbol (str) -> dict of OHLCV, or None if failed.
+    Downloads NSE Bhavcopy for the specified date.
+    Priority: Bhavcopy ZIP (has official ClsPric) > DAT file (has LTP only).
+    Returns: dict: Ticker -> {open, high, low, close, volume}, or None if failed.
     """
     global _bhavcopy_memory_cache
 
@@ -710,20 +708,53 @@ def load_bhavcopy_lookup(date_val):
         logger.debug(f"Bhavcopy memory cache hit for {d_key}")
         return _bhavcopy_memory_cache[d_key]
 
+    dt_str = d_key.strftime("%Y%m%d")
     dat_str = d_key.strftime("%d%m%Y").upper()
+    zip_cache_path = os.path.join(BHAVCOPY_CACHE_DIR, f"BhavCopy_NSE_CM_0_0_0_{dt_str}_F_0000.csv.zip")
     dat_cache_path = os.path.join(BHAVCOPY_CACHE_DIR, f"FCM_INTRM_BC{dat_str}.DAT")
 
-    # 1. Check cached DAT file
+    # 1. Check cached Bhavcopy ZIP (has official ClsPric)
+    if os.path.exists(zip_cache_path):
+        logger.info(f"Using cached Bhavcopy ZIP for {d_key}")
+        try:
+            lookup = _parse_bhavcopy_zip(zip_cache_path)
+            if lookup:
+                _bhavcopy_memory_cache[d_key] = lookup
+                return lookup
+        except Exception as e:
+            logger.warning(f"Failed parsing cached Bhavcopy ZIP for {d_key}: {e}")
+
+    # 2. Download Bhavcopy ZIP (published ~6:30 PM IST, has official ClsPric)
+    zip_url = f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{dt_str}_F_0000.csv.zip"
+    logger.info(f"Downloading Bhavcopy ZIP for {d_key}...")
+    try:
+        req = urllib.request.Request(zip_url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+        })
+        with urllib.request.urlopen(req, timeout=15) as response:
+            zip_data = response.read()
+        with open(zip_cache_path, "wb") as f:
+            f.write(zip_data)
+        lookup = _parse_bhavcopy_zip(zip_cache_path)
+        if lookup:
+            logger.info(f"Bhavcopy ZIP downloaded for {d_key} ({len(lookup)} symbols, has official ClsPric)")
+            _bhavcopy_memory_cache[d_key] = lookup
+            return lookup
+    except Exception as e:
+        logger.warning(f"Bhavcopy ZIP download failed for {d_key}: {e}")
+
+    # 3. Check cached DAT file (has LTP only, not official ClsPric)
     if os.path.exists(dat_cache_path):
-        logger.info(f"Using cached DAT file for {d_key}")
+        logger.info(f"Using cached DAT file for {d_key} (LTP only, no official ClsPric)")
         lookup = _parse_dat_file(dat_cache_path)
         if lookup:
             _bhavcopy_memory_cache[d_key] = lookup
             return lookup
 
-    # 2. Download DAT file (published ~6:00 PM IST)
+    # 4. Download DAT file (published ~6:00 PM IST, has LTP only)
     dat_url = f"https://nsearchives.nseindia.com/content/trdops/FCM_INTRM_BC{dat_str}.DAT"
-    logger.info(f"Downloading DAT file for {d_key}...")
+    logger.info(f"Downloading DAT file for {d_key} (LTP only)...")
     try:
         req = urllib.request.Request(dat_url, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -735,17 +766,35 @@ def load_bhavcopy_lookup(date_val):
             f.write(dat_data)
         lookup = _parse_dat_file(dat_cache_path)
         if lookup:
-            logger.info(f"DAT file downloaded for {d_key} ({len(lookup)} symbols)")
+            logger.info(f"DAT file downloaded for {d_key} ({len(lookup)} symbols, LTP only)")
             _bhavcopy_memory_cache[d_key] = lookup
             return lookup
     except Exception as e:
         logger.warning(f"DAT file download failed for {d_key}: {e}")
 
-    # 3. Retry with delay
+    # 5. Retry both with delay
     import time as _time
     for attempt in range(3):
-        logger.info(f"DAT retry {attempt+1}/3 for {d_key} (waiting 30s)...")
+        logger.info(f"Bhavcopy retry {attempt+1}/3 for {d_key} (waiting 30s)...")
         _time.sleep(30)
+        # Try ZIP first
+        try:
+            req = urllib.request.Request(zip_url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "*/*",
+            })
+            with urllib.request.urlopen(req, timeout=15) as response:
+                zip_data = response.read()
+            with open(zip_cache_path, "wb") as f:
+                f.write(zip_data)
+            lookup = _parse_bhavcopy_zip(zip_cache_path)
+            if lookup:
+                logger.info(f"Bhavcopy ZIP downloaded on retry {attempt+1}")
+                _bhavcopy_memory_cache[d_key] = lookup
+                return lookup
+        except Exception:
+            pass
+        # Try DAT
         try:
             req = urllib.request.Request(dat_url, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -757,11 +806,11 @@ def load_bhavcopy_lookup(date_val):
                 f.write(dat_data)
             lookup = _parse_dat_file(dat_cache_path)
             if lookup:
-                logger.info(f"DAT file downloaded on retry {attempt+1} for {d_key} ({len(lookup)} symbols)")
+                logger.info(f"DAT file downloaded on retry {attempt+1} (LTP only)")
                 _bhavcopy_memory_cache[d_key] = lookup
                 return lookup
-        except Exception as e:
-            logger.warning(f"DAT retry {attempt+1} failed for {d_key}: {e}")
+        except Exception:
+            pass
 
     return None
 
