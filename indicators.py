@@ -968,37 +968,220 @@ def score_money_flow_breakdown(df, pos):
     }
 
 
-def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle Close", bhavcopy_lookup=None, target_session="Current Session"):
+def _get_ref_ohlc(d, daily_df, df, interval, close_method, bhavcopy_lookup, symbol, include_current=False):
+    # Determine reference period type
+    if interval in ['30m', '60m', '1h']:
+        ref_type = 'weekly'
+    elif interval in ['1d', 'D']:
+        ref_type = 'monthly'
+    else:
+        ref_type = 'daily'
+
+    # Filter daily_df to dates before/including d
+    if daily_df is not None and not daily_df.empty:
+        if include_current:
+            prev_df = daily_df[daily_df.index.date <= d]
+        else:
+            prev_df = daily_df[daily_df.index.date < d]
+            
+        if prev_df.empty:
+            return None
+        
+        # Calculate daily ATR(14)
+        atr_series = calculate_atr(daily_df, length=14)
+        
+        if ref_type == 'daily':
+            prev_row = prev_df.iloc[-1]
+            prev_d = prev_df.index[-1].date()
+            prev_dt = prev_df.index[-1]
+            high_val = float(prev_row['high'])
+            low_val = float(prev_row['low'])
+            open_val = float(prev_row['open'])
+            vol_val = int(prev_row.get('volume', 0))
+            atr_val = float(atr_series.loc[prev_dt]) if prev_dt in atr_series.index else 0.0
+            
+            # Resolve close
+            close_val = float(prev_row['close'])
+            if close_method == "Intraday Candle Close" and df is not None and not df.empty:
+                day_intraday = df[df.index.date == prev_d]
+                if not day_intraday.empty:
+                    close_val = float(day_intraday['close'].iloc[-1])
+            elif close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
+                clean_sym = symbol.upper() if symbol else ""
+                if ":" in clean_sym:
+                    clean_sym = clean_sym.split(":")[1]
+                clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                if clean_sym in bhavcopy_lookup:
+                    close_val = bhavcopy_lookup[clean_sym]['ltp']
+                else:
+                    if df is not None and not df.empty:
+                        day_intraday = df[df.index.date == prev_d]
+                        if not day_intraday.empty:
+                            close_val = float(day_intraday['close'].iloc[-1])
+            
+            return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': prev_d, 'atr': atr_val}
+            
+        elif ref_type == 'weekly':
+            # Group by ISO week (year, week)
+            last_date = prev_df.index[-1].date()
+            last_year, last_week, _ = last_date.isocalendar()
+            
+            # Get all daily candles belonging to that week
+            week_mask = [x.date().isocalendar()[:2] == (last_year, last_week) for x in prev_df.index]
+            week_df = prev_df[week_mask]
+            if week_df.empty:
+                return None
+                
+            high_val = float(week_df['high'].max())
+            low_val = float(week_df['low'].min())
+            open_val = float(week_df['open'].iloc[0])
+            vol_val = int(week_df['volume'].sum()) if 'volume' in week_df.columns else 0
+            
+            # Resolve close
+            last_day_dt = week_df.index[-1]
+            last_day_d = last_day_dt.date()
+            close_val = float(week_df['close'].iloc[-1])
+            atr_val = float(atr_series.loc[last_day_dt]) if last_day_dt in atr_series.index else 0.0
+            
+            if close_method == "Intraday Candle Close" and df is not None and not df.empty:
+                day_intraday = df[df.index.date == last_day_d]
+                if not day_intraday.empty:
+                    close_val = float(day_intraday['close'].iloc[-1])
+            elif close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
+                clean_sym = symbol.upper() if symbol else ""
+                if ":" in clean_sym:
+                    clean_sym = clean_sym.split(":")[1]
+                clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                if clean_sym in bhavcopy_lookup:
+                    close_val = bhavcopy_lookup[clean_sym]['ltp']
+                else:
+                    if df is not None and not df.empty:
+                        day_intraday = df[df.index.date == last_day_d]
+                        if not day_intraday.empty:
+                            close_val = float(day_intraday['close'].iloc[-1])
+                            
+            return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': last_day_d, 'atr': atr_val}
+            
+        elif ref_type == 'monthly':
+            # Group by year, month
+            last_date = prev_df.index[-1].date()
+            last_year = last_date.year
+            last_month = last_date.month
+            
+            month_mask = [(x.date().year == last_year and x.date().month == last_month) for x in prev_df.index]
+            month_df = prev_df[month_mask]
+            if month_df.empty:
+                return None
+                
+            high_val = float(month_df['high'].max())
+            low_val = float(month_df['low'].min())
+            open_val = float(month_df['open'].iloc[0])
+            vol_val = int(month_df['volume'].sum()) if 'volume' in month_df.columns else 0
+            
+            # Resolve close
+            last_day_dt = month_df.index[-1]
+            last_day_d = last_day_dt.date()
+            close_val = float(month_df['close'].iloc[-1])
+            atr_val = float(atr_series.loc[last_day_dt]) if last_day_dt in atr_series.index else 0.0
+            
+            if close_method == "Intraday Candle Close" and df is not None and not df.empty:
+                day_intraday = df[df.index.date == last_day_d]
+                if not day_intraday.empty:
+                    close_val = float(day_intraday['close'].iloc[-1])
+            elif close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
+                clean_sym = symbol.upper() if symbol else ""
+                if ":" in clean_sym:
+                    clean_sym = clean_sym.split(":")[1]
+                clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                if clean_sym in bhavcopy_lookup:
+                    close_val = bhavcopy_lookup[clean_sym]['ltp']
+                else:
+                    if df is not None and not df.empty:
+                        day_intraday = df[df.index.date == last_day_d]
+                        if not day_intraday.empty:
+                            close_val = float(day_intraday['close'].iloc[-1])
+                            
+            return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': last_day_d, 'atr': atr_val}
+            
+    else:
+        # Fallback using df itself
+        prev_df = df[df.index.date < d] if not include_current else df[df.index.date <= d]
+        if prev_df.empty:
+            return None
+            
+        if ref_type == 'daily':
+            prev_d = prev_df.index[-1].date()
+            day_data = prev_df[prev_df.index.date == prev_d]
+            high_val = float(day_data['high'].max())
+            low_val = float(day_data['low'].min())
+            open_val = float(day_data['open'].iloc[0])
+            vol_val = int(day_data['volume'].sum())
+            close_val = float(day_data['close'].iloc[-1])
+            
+            if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
+                clean_sym = symbol.upper() if symbol else ""
+                if ":" in clean_sym:
+                    clean_sym = clean_sym.split(":")[1]
+                clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                if clean_sym in bhavcopy_lookup:
+                    close_val = bhavcopy_lookup[clean_sym]['ltp']
+                    
+            return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': prev_d, 'atr': 0.0}
+            
+        elif ref_type == 'weekly':
+            last_date = prev_df.index[-1].date()
+            last_year, last_week, _ = last_date.isocalendar()
+            week_mask = [x.date().isocalendar()[:2] == (last_year, last_week) for x in prev_df.index]
+            week_data = prev_df[week_mask]
+            if week_data.empty:
+                return None
+            high_val = float(week_data['high'].max())
+            low_val = float(week_data['low'].min())
+            open_val = float(week_data['open'].iloc[0])
+            vol_val = int(week_data['volume'].sum())
+            close_val = float(week_data['close'].iloc[-1])
+            last_day_d = week_data.index[-1].date()
+            
+            if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
+                clean_sym = symbol.upper() if symbol else ""
+                if ":" in clean_sym:
+                    clean_sym = clean_sym.split(":")[1]
+                clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                if clean_sym in bhavcopy_lookup:
+                    close_val = bhavcopy_lookup[clean_sym]['ltp']
+                    
+            return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': last_day_d, 'atr': 0.0}
+            
+        elif ref_type == 'monthly':
+            last_date = prev_df.index[-1].date()
+            last_year = last_date.year
+            last_month = last_date.month
+            month_mask = [(x.date().year == last_year and x.date().month == last_month) for x in prev_df.index]
+            month_data = prev_df[month_mask]
+            if month_data.empty:
+                return None
+            high_val = float(month_data['high'].max())
+            low_val = float(month_data['low'].min())
+            open_val = float(month_data['open'].iloc[0])
+            vol_val = int(month_data['volume'].sum())
+            close_val = float(month_data['close'].iloc[-1])
+            last_day_d = month_data.index[-1].date()
+            
+            if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
+                clean_sym = symbol.upper() if symbol else ""
+                if ":" in clean_sym:
+                    clean_sym = clean_sym.split(":")[1]
+                clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                if clean_sym in bhavcopy_lookup:
+                    close_val = bhavcopy_lookup[clean_sym]['ltp']
+                    
+            return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': last_day_d, 'atr': 0.0}
+    return None
+
+
+def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle Close", bhavcopy_lookup=None, target_session="Current Session", interval="1d"):
     """
     Calculate Central Pivot Range (CPR) with ATR-Normalized Width + Support/Resistance levels.
-
-    Uses DAILY OHLC for accurate CPR levels (not aggregated intraday candles).
-    If daily_df is provided, uses it for prev day OHLC. Otherwise falls back to aggregating from df.
-
-    Returns DataFrame with: CPR_PP, CPR_BC, CPR_TC, CPR_Width, CPR_ATR, CPR_ATR_Ratio, CPR_Type,
-                            CPR_R1, CPR_R2, CPR_R3, CPR_S1, CPR_S2, CPR_S3
-
-    Formulas (from previous day's H/L/C):
-        PP = (H + L + C) / 3
-        BC = (H + L) / 2
-        TC = 2 * PP - BC
-        Width = abs(TC - BC)
-        R1 = 2 * PP - L
-        R2 = PP + (H - L)
-        R3 = H + 2 * (PP - L)
-        S1 = 2 * PP - H
-        S2 = PP - (H - L)
-        S3 = L - 2 * (H - PP)
-        ATR Ratio = Width / ATR(14)
-
-    ATR-Normalized Classification:
-        < 0.15  : EXTREME NARROW
-        0.15-0.30: VERY NARROW
-        0.30-0.50: NARROW
-        0.50-1.00: NORMAL
-        1.00-1.50: SLIGHTLY WIDE
-        1.50-2.00: WIDE
-        > 2.00  : VERY WIDE
     """
     cpr_pp = pd.Series(np.nan, index=df.index)
     cpr_bc = pd.Series(np.nan, index=df.index)
@@ -1019,112 +1202,35 @@ def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle 
     prev_close = pd.Series(np.nan, index=df.index)
     prev_volume = pd.Series(np.nan, index=df.index)
 
-    # Use daily_df for ATR(14) when available (matches Zerodha), else fall back to intraday
     dates = df.index.date
     unique_dates = sorted(set(dates))
 
-    # Build daily OHLC lookup + ATR from daily data
-    daily_ohlc = {}
-    if daily_df is not None and not daily_df.empty:
-        atr_series = calculate_atr(daily_df, length=14)
-        for dt in daily_df.index:
-            d = dt.date() if hasattr(dt, 'date') else dt
-            row = daily_df.loc[dt]
-            atr_val = atr_series.loc[dt] if dt in atr_series.index else np.nan
-            
-            # Resolve close price based on selected method
-            close_val = float(row['close']) # "Without Correction (Standard EOD Close)" uses yfinance daily close
-            
-            if close_method == "Intraday Candle Close":
-                day_intraday = df[df.index.date == d]
-                if not day_intraday.empty:
-                    close_val = float(day_intraday['close'].iloc[-1])
-            elif close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
-                clean_sym = symbol.upper() if symbol else ""
-                if ":" in clean_sym:
-                    clean_sym = clean_sym.split(":")[1]
-                clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
-                
-                if clean_sym in bhavcopy_lookup:
-                    close_val = bhavcopy_lookup[clean_sym]['ltp']
-                    logger.debug(f"Bhavcopy LTP correct for {clean_sym}: {close_val}")
-                else:
-                    # Fallback to Intraday Candle Close if not found in Bhavcopy lookup
-                    day_intraday = df[df.index.date == d]
-                    if not day_intraday.empty:
-                        close_val = float(day_intraday['close'].iloc[-1])
-            
-            daily_ohlc[d] = {
-                'high': float(row['high']),
-                'low': float(row['low']),
-                'close': close_val,
-                'open': float(row['open']),
-                'volume': int(row['volume']) if 'volume' in row.index else 0,
-                'atr': float(atr_val) if not pd.isna(atr_val) else 0,
-            }
-    else:
-        # Fallback: aggregate from intraday
-        atr_series = calculate_atr(df, length=14)
-        for d in unique_dates:
-            mask = dates == d
-            day_data = df[mask]
-            if not day_data.empty:
-                close_val = float(day_data['close'].iloc[-1])
-                
-                # Apply Bhavcopy LTP if available on the fallback path too
-                if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
-                    clean_sym = symbol.upper() if symbol else ""
-                    if ":" in clean_sym:
-                        clean_sym = clean_sym.split(":")[1]
-                    clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
-                    if clean_sym in bhavcopy_lookup:
-                        close_val = bhavcopy_lookup[clean_sym]['ltp']
-                elif close_method == "Without Correction (Standard EOD Close)":
-                    # Fallback has no daily candle data so it will just use continuous close
-                    pass
-                    
-                daily_ohlc[d] = {
-                    'high': float(day_data['high'].max()),
-                    'low': float(day_data['low'].min()),
-                    'close': close_val,
-                    'open': float(day_data['open'].iloc[0]),
-                    'volume': int(day_data['volume'].sum()),
-                    'atr': 0,
-                }
-
-    for i, d in enumerate(unique_dates):
-        if target_session == "Next Session":
-            prev_d = d
-        else:
-            if i == 0:
-                continue  # No previous day for first day
-            prev_d = unique_dates[i - 1]
-
-        if prev_d not in daily_ohlc:
+    for d in unique_dates:
+        # Determine whether to include current date d in the reference period search
+        include_curr = (target_session == "Next Session")
+        
+        ref = _get_ref_ohlc(d, daily_df, df, interval, close_method, bhavcopy_lookup, symbol, include_current=include_curr)
+        if ref is None:
             continue
 
-        prev = daily_ohlc[prev_d]
-        prev_high_val = prev['high']
-        prev_low_val = prev['low']
-        prev_close_val = prev['close']
+        prev_high_val = ref['high']
+        prev_low_val = ref['low']
+        prev_close_val = ref['close']
 
-        # CPR formulas (High precision calculations first)
+        # CPR formulas
         pp_raw = (prev_high_val + prev_low_val + prev_close_val) / 3
         bc_raw = (prev_high_val + prev_low_val) / 2
         tc_raw = (2 * pp_raw) - bc_raw
 
-        # Swap so TC is always the higher boundary based on high precision values
         if tc_raw < bc_raw:
             tc_raw, bc_raw = bc_raw, tc_raw
 
-        # Round key CPR values to 2 decimal places to match Zerodha/ChartIQ
         pp = round(pp_raw, 2)
         bc = round(bc_raw, 2)
         tc = round(tc_raw, 2)
-
         width = abs(tc - bc)
 
-        # Support/Resistance levels using range-based calculations matching Zerodha/ChartIQ
+        # Support/Resistance levels
         r1 = round(2 * pp - prev_low_val, 2)
         s1 = round(2 * pp - prev_high_val, 2)
         r2 = round(pp + (prev_high_val - prev_low_val), 2)
@@ -1132,14 +1238,12 @@ def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle 
         r3 = round(pp + 2 * (prev_high_val - prev_low_val), 2)
         s3 = round(pp - 2 * (prev_high_val - prev_low_val), 2)
 
-        # ATR from daily data (use prev day's ATR for current day's CPR)
-        atr_val = daily_ohlc.get(prev_d, {}).get('atr', 0)
-        atr_ratio = width / atr_val if atr_val > 0 else 0
+        # ATR
+        atr_val = ref['atr']
+        atr_ratio = width / atr_val if atr_val > 0 else 0.0
 
-        # Current day mask
         curr_mask = dates == d
 
-        # Classification
         if atr_ratio < 0.15:
             cpr_class = "EXTREME NARROW"
         elif atr_ratio < 0.30:
@@ -1160,7 +1264,7 @@ def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle 
         cpr_tc[curr_mask] = round(tc, 2)
         cpr_width[curr_mask] = round(width, 2)
         cpr_atr[curr_mask] = round(atr_val, 2)
-        cpr_atr_ratio[curr_mask] = round(atr_ratio, 3)
+        cpr_atr_ratio[curr_mask] = round(atr_ratio, 4)
         cpr_type[curr_mask] = cpr_class
         cpr_r1[curr_mask] = round(r1, 2)
         cpr_r2[curr_mask] = round(r2, 2)
@@ -1168,11 +1272,11 @@ def calculate_cpr(df, daily_df=None, symbol=None, close_method="Intraday Candle 
         cpr_s1[curr_mask] = round(s1, 2)
         cpr_s2[curr_mask] = round(s2, 2)
         cpr_s3[curr_mask] = round(s3, 2)
-        prev_open[curr_mask] = round(daily_ohlc[prev_d]['open'], 2)
+        prev_open[curr_mask] = round(ref['open'], 2)
         prev_high[curr_mask] = round(prev_high_val, 2)
         prev_low[curr_mask] = round(prev_low_val, 2)
         prev_close[curr_mask] = round(prev_close_val, 2)
-        prev_volume[curr_mask] = daily_ohlc[prev_d].get('volume', 0)
+        prev_volume[curr_mask] = ref['volume']
 
     return pd.DataFrame({
         'CPR_PP': cpr_pp, 'CPR_BC': cpr_bc, 'CPR_TC': cpr_tc,
