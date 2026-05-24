@@ -32,7 +32,7 @@ on:
           - yahoo
           - yfinance
       close_method:
-        description: 'CPR Close Baseline'
+        description: 'CPR Close Baseline (Note: For 1h/1d, Standard EOD Close or LTP Bhavcopy is used; Intraday Close is routed to LTP)'
         required: false
         default: 'Official Exchange LTP (Bhavcopy)'
         type: choice
