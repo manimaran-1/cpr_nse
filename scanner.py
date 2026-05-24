@@ -10,11 +10,10 @@ logger = logging.getLogger(__name__)
 IST = pytz.timezone('Asia/Kolkata')
 
 
-def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_session, intraday_df=None):
+def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_session):
     """
     Fast CPR computation for a single date — avoids iterating all dates.
     Used when include_intraday=False. Returns a dict with CPR levels.
-    intraday_df: optional intraday data for fallback close when DAT file unavailable.
     """
     if daily_df is None or daily_df.empty or len(daily_df) < 2:
         return None
@@ -36,17 +35,16 @@ def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_ses
     prev_high = float(ref_row['high'])
     prev_low = float(ref_row['low'])
 
-    # Resolve close price: DAT file > intraday last candle > daily close
-    prev_close = None
+    # Resolve close price based on method
     if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup:
         clean_sym = symbol.split(':')[1].replace('-EQ', '').strip() if ':' in symbol else symbol
         if clean_sym in bhavcopy_lookup:
-            prev_close = float(bhavcopy_lookup[clean_sym]['close'])
-
-    if prev_close is None and intraday_df is not None and not intraday_df.empty:
-        prev_close = float(intraday_df['close'].iloc[-1])
-
-    if prev_close is None:
+            prev_close = float(bhavcopy_lookup[clean_sym]['ltp'])
+        else:
+            prev_close = float(ref_row['close'])
+    elif close_method == "Intraday Candle Close":
+        prev_close = float(ref_row['close'])
+    else:
         prev_close = float(ref_row['close'])
 
     prev_open = float(ref_row['open'])
@@ -131,19 +129,17 @@ def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_ses
 
 def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Close",
                      bhavcopy_lookup=None, target_session="Current Session",
-                     include_intraday=False, intraday_df=None):
+                     include_intraday=False):
     """
     CPR-only scanner — computes ATR-Normalized CPR levels + S/R.
 
     include_intraday=False (default): 1 row per stock with CPR levels only.
     include_intraday=True: All candles from last trading day with OHLC/Position/Volume.
-    intraday_df: optional intraday data for fallback close when DAT file unavailable.
     """
     if not include_intraday:
         # FAST PATH: compute CPR for single date, no full DataFrame processing
         result = _fast_cpr_single(daily_df if daily_df is not None and not daily_df.empty else df,
-                                  symbol, close_method, bhavcopy_lookup, target_session,
-                                  intraday_df=intraday_df)
+                                  symbol, close_method, bhavcopy_lookup, target_session)
         return [result] if result else []
 
     # === INTRADAY MODE: Full processing ===
@@ -304,6 +300,7 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
         if sample_df is not None:
             unique_dates = sorted(list(set(sample_df.index.date)))
             if len(unique_dates) >= 1:
+                # If target is Next Session, we want today's data (latest unique date) as the baseline for tomorrow's CPR
                 if target_session == "Next Session":
                     prev_trading_date = unique_dates[-1]
                 else:
@@ -312,18 +309,11 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
                 logger.info(f"Detected trading date for Bhavcopy lookup ({target_session}): {prev_trading_date}")
                 bhavcopy_lookup = data_loader.load_bhavcopy_lookup(prev_trading_date)
                 if not bhavcopy_lookup:
-                    logger.warning(f"DAT file not available for {prev_trading_date}. Falling back to intraday candle close.")
+                    logger.warning(f"Bhavcopy lookup not resolved for date {prev_trading_date}. Falling back to default.")
             else:
                 logger.warning(f"Insufficient dates in dataset to determine baseline date: {unique_dates}")
         else:
             logger.warning("No data found in cache, cannot resolve baseline date.")
-
-        # If DAT failed and we're in fast mode, fetch intraday data for fallback close
-        if not bhavcopy_lookup and not include_intraday and not data_cache:
-            logger.info("Fetching intraday data for fallback close prices...")
-            data_cache = data_loader.fetch_data_batch(symbols, interval=interval, max_workers=4,
-                                                      progress_callback=_fetch_progress, phase_label="intraday")
-            logger.info(f"Intraday fallback: {len(data_cache)}/{total} symbols fetched")
 
     completed_count = 0
     skipped_count = 0
@@ -347,7 +337,6 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
                     completed_count += 1
                     continue
 
-            intraday_df = data_cache.get(sym) if not bhavcopy_lookup and data_cache else None
             results = check_conditions(
                 df,
                 sym,
@@ -355,8 +344,7 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
                 close_method=close_method,
                 bhavcopy_lookup=bhavcopy_lookup,
                 target_session=target_session,
-                include_intraday=include_intraday,
-                intraday_df=intraday_df
+                include_intraday=include_intraday
             )
             if results:
                 all_results.extend(results)
