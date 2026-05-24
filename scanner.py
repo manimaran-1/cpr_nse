@@ -39,7 +39,7 @@ def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_ses
     if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup:
         clean_sym = symbol.split(':')[1].replace('-EQ', '').strip() if ':' in symbol else symbol
         if clean_sym in bhavcopy_lookup:
-            prev_close = float(bhavcopy_lookup[clean_sym]['ltp'])
+            prev_close = float(bhavcopy_lookup[clean_sym]['close'])
         else:
             prev_close = float(ref_row['close'])
     elif close_method == "Intraday Candle Close":
