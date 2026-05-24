@@ -747,3 +747,9 @@ Risk = ₹2,000 / ₹12 = 166 shares → Round to 150
 ☐ R:R > 1:1.5
 ```
 """)
+
+# Keepalive heartbeat — prevents Streamlit Cloud idle WebSocket timeout
+@st.fragment(run_every=300)
+def _keepalive():
+    pass
+_keepalive()
