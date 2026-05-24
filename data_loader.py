@@ -720,6 +720,28 @@ def load_bhavcopy_lookup(date_val):
     except Exception as e:
         logger.warning(f"Bhavcopy download/parse failed for {d_key}: {e}")
 
+    # 3. Retry with delay — Bhavcopy may not be published yet
+    import time as _time
+    for attempt in range(3):
+        logger.info(f"Bhavcopy retry {attempt+1}/3 for {d_key} (waiting 30s)...")
+        _time.sleep(30)
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "*/*",
+            })
+            with urllib.request.urlopen(req, timeout=12) as response:
+                zip_data = response.read()
+            with open(cache_path, "wb") as f:
+                f.write(zip_data)
+            lookup = _parse_bhavcopy_zip(cache_path)
+            if lookup:
+                logger.info(f"Bhavcopy downloaded on retry {attempt+1} for {d_key}")
+                _bhavcopy_memory_cache[d_key] = lookup
+                return lookup
+        except Exception as e:
+            logger.warning(f"Bhavcopy retry {attempt+1} failed for {d_key}: {e}")
+
     return None
 
 def _parse_bhavcopy_zip(zip_path):
