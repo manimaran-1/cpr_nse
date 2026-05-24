@@ -61,7 +61,7 @@ jobs:
           DATA_SOURCE: 'yahoo'
           SCAN_UNIVERSE: ${{ github.event.inputs.universe || 'All Segment' }}
           SCAN_INTERVAL: ${{ github.event.inputs.interval || '15m' }}
-          CLOSE_METHOD: 'Official Exchange LTP (Bhavcopy)'
+          CLOSE_METHOD: 'Intraday Candle Close'
           TARGET_SESSION: 'Next Session'
           INCLUDE_INTRADAY: ${{ github.event.inputs.include_intraday || 'false' }}
         run: python automation_bot.py
