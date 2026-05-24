@@ -544,6 +544,11 @@ Candle interval for intraday analysis:
 - **5m** — 5-minute candles. Very granular, more noise.
 - **1d** — Daily candles. For positional/swing trading.
 
+**CPR Reference Period** (which OHLC is used for CPR calculation):
+- **1m, 3m, 5m, 10m, 15m** → Previous **day's** OHLC is used
+- **30m, 1h** → Previous **week's** OHLC is used
+- **1d** → Previous **month's** OHLC is used
+
 ### Data Fetch Method
 Which API to use for fetching OHLCV data:
 - **yflib** — yfinance library. More reliable, slower (4+ requests per symbol).
