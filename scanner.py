@@ -15,6 +15,9 @@ def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_ses
     Fast CPR computation for a single date — avoids iterating all dates.
     Used when include_intraday=False. Returns a dict with CPR levels.
     """
+    if interval in ['1h', '1d', 'D'] and close_method == "Intraday Candle Close":
+        close_method = "Official Exchange LTP (Bhavcopy)"
+
     if daily_df is None or daily_df.empty or len(daily_df) < 2:
         return None
 
@@ -227,6 +230,12 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
     """
     import time as _time
     t0 = _time.time()
+    
+    # For timeframes 1h and 1d, 'Intraday Candle Close' is not applicable. Override to Bhavcopy.
+    if interval in ['1h', '1d', 'D'] and close_method == "Intraday Candle Close":
+        logger.info(f"Overriding close_method 'Intraday Candle Close' to 'Official Exchange LTP (Bhavcopy)' for timeframe '{interval}'")
+        close_method = "Official Exchange LTP (Bhavcopy)"
+
     all_results = []
     total = len(symbols)
 
