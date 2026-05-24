@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       universe:
-        description: 'Stock universe'
+        description: 'Market Universe'
         required: false
         default: 'All Segment'
         type: choice
@@ -15,7 +15,7 @@ on:
           - Nifty 200
           - Nifty 50
       interval:
-        description: 'Timeframe'
+        description: 'Timeframe (Interval)'
         required: false
         default: '15m'
         type: choice
@@ -23,8 +23,33 @@ on:
           - 15m
           - 1h
           - 1d
+      data_source:
+        description: 'Data Fetch Method'
+        required: false
+        default: 'yahoo'
+        type: choice
+        options:
+          - yahoo
+          - yfinance
+      close_method:
+        description: 'CPR Close Baseline'
+        required: false
+        default: 'Official Exchange LTP (Bhavcopy)'
+        type: choice
+        options:
+          - 'Intraday Candle Close'
+          - 'Official Exchange LTP (Bhavcopy)'
+          - 'Without Correction (Standard EOD Close)'
+      target_session:
+        description: 'CPR Target Session'
+        required: false
+        default: 'Next Session'
+        type: choice
+        options:
+          - 'Current Session'
+          - 'Next Session'
       include_intraday:
-        description: 'Include intraday candle columns (Open/High/Low/Close/Position/Time/Volume per candle)'
+        description: 'Include Intraday Candles (Open/High/Low/Close/Position/Time/Volume per candle)'
         required: false
         default: 'false'
         type: choice
@@ -58,10 +83,10 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_ACTIONS: 'true'
           ONCE: '1'
-          DATA_SOURCE: 'yahoo'
+          DATA_SOURCE: ${{ github.event.inputs.data_source || 'yahoo' }}
           SCAN_UNIVERSE: ${{ github.event.inputs.universe || 'All Segment' }}
           SCAN_INTERVAL: ${{ github.event.inputs.interval || '15m' }}
-          CLOSE_METHOD: 'Intraday Candle Close'
-          TARGET_SESSION: 'Next Session'
+          CLOSE_METHOD: ${{ github.event.inputs.close_method || 'Official Exchange LTP (Bhavcopy)' }}
+          TARGET_SESSION: ${{ github.event.inputs.target_session || 'Next Session' }}
           INCLUDE_INTRADAY: ${{ github.event.inputs.include_intraday || 'false' }}
         run: python automation_bot.py
