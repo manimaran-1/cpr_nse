@@ -93,12 +93,32 @@ selected_data_source = st.sidebar.selectbox("Data Fetch Method", data_source_opt
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 CPR Close Baseline")
-cpr_method_options = [
-    "Intraday Candle Close",
-    "Official Exchange LTP (Bhavcopy)",
-    "Without Correction (Standard EOD Close)"
-]
-selected_cpr_method = st.sidebar.selectbox("Calculation Baseline Close", cpr_method_options, index=0)
+
+if selected_timeframe in ["1h", "1d"]:
+    cpr_method_options = [
+        "Official Exchange LTP (Bhavcopy)",
+        "Without Correction (Standard EOD Close)"
+    ]
+else:
+    cpr_method_options = [
+        "Official Exchange LTP (Bhavcopy)",
+        "Intraday Candle Close",
+        "Without Correction (Standard EOD Close)"
+    ]
+
+default_idx = 0
+if "cpr_method" in st.session_state:
+    prev_val = st.session_state.cpr_method
+    if prev_val in cpr_method_options:
+        default_idx = cpr_method_options.index(prev_val)
+
+selected_cpr_method = st.sidebar.selectbox(
+    "Calculation Baseline Close", 
+    cpr_method_options, 
+    index=default_idx,
+    key="selected_cpr_method_selectbox"
+)
+st.session_state.cpr_method = selected_cpr_method
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📅 CPR Target Session")
