@@ -969,6 +969,7 @@ def score_money_flow_breakdown(df, pos):
 
 
 def _get_ref_ohlc(d, daily_df, df, interval, close_method, bhavcopy_lookup, symbol, include_current=False):
+    import datetime
     # Determine reference period type
     if interval in ['30m', '60m', '1h']:
         ref_type = 'weekly'
@@ -1022,13 +1023,20 @@ def _get_ref_ohlc(d, daily_df, df, interval, close_method, bhavcopy_lookup, symb
             return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': prev_d, 'atr': atr_val}
             
         elif ref_type == 'weekly':
-            # Group by ISO week (year, week)
-            last_date = prev_df.index[-1].date()
-            last_year, last_week, _ = last_date.isocalendar()
-            
-            # Get all daily candles belonging to that week
-            week_mask = [x.date().isocalendar()[:2] == (last_year, last_week) for x in prev_df.index]
-            week_df = prev_df[week_mask]
+            if include_current:
+                ref_date = d
+            else:
+                ref_date = d - datetime.timedelta(days=7)
+                
+            week_df = pd.DataFrame()
+            for offset in range(0, 5):
+                test_date = ref_date - datetime.timedelta(days=7 * offset)
+                ref_year, ref_week, _ = test_date.isocalendar()
+                week_mask = [x.date().isocalendar()[:2] == (ref_year, ref_week) for x in prev_df.index]
+                week_df = prev_df[week_mask]
+                if not week_df.empty:
+                    break
+                    
             if week_df.empty:
                 return None
                 
@@ -1047,29 +1055,29 @@ def _get_ref_ohlc(d, daily_df, df, interval, close_method, bhavcopy_lookup, symb
                 day_intraday = df[df.index.date == last_day_d]
                 if not day_intraday.empty:
                     close_val = float(day_intraday['close'].iloc[-1])
-            elif close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
-                clean_sym = symbol.upper() if symbol else ""
-                if ":" in clean_sym:
-                    clean_sym = clean_sym.split(":")[1]
-                clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
-                if clean_sym in bhavcopy_lookup:
-                    close_val = bhavcopy_lookup[clean_sym]['ltp']
-                else:
-                    if df is not None and not df.empty:
-                        day_intraday = df[df.index.date == last_day_d]
-                        if not day_intraday.empty:
-                            close_val = float(day_intraday['close'].iloc[-1])
                             
             return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': last_day_d, 'atr': atr_val}
             
         elif ref_type == 'monthly':
-            # Group by year, month
-            last_date = prev_df.index[-1].date()
-            last_year = last_date.year
-            last_month = last_date.month
-            
-            month_mask = [(x.date().year == last_year and x.date().month == last_month) for x in prev_df.index]
-            month_df = prev_df[month_mask]
+            if include_current:
+                ref_date = d
+            else:
+                ref_date = d.replace(day=1) - datetime.timedelta(days=1)
+                
+            month_df = pd.DataFrame()
+            for offset in range(0, 4):
+                first_day = ref_date.replace(day=1)
+                test_date = first_day - datetime.timedelta(days=1)
+                for _ in range(offset):
+                    test_date = test_date.replace(day=1) - datetime.timedelta(days=1)
+                    
+                ref_year = test_date.year
+                ref_month = test_date.month
+                month_mask = [(x.date().year == ref_year and x.date().month == ref_month) for x in prev_df.index]
+                month_df = prev_df[month_mask]
+                if not month_df.empty:
+                    break
+                    
             if month_df.empty:
                 return None
                 
@@ -1088,18 +1096,6 @@ def _get_ref_ohlc(d, daily_df, df, interval, close_method, bhavcopy_lookup, symb
                 day_intraday = df[df.index.date == last_day_d]
                 if not day_intraday.empty:
                     close_val = float(day_intraday['close'].iloc[-1])
-            elif close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup is not None:
-                clean_sym = symbol.upper() if symbol else ""
-                if ":" in clean_sym:
-                    clean_sym = clean_sym.split(":")[1]
-                clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
-                if clean_sym in bhavcopy_lookup:
-                    close_val = bhavcopy_lookup[clean_sym]['ltp']
-                else:
-                    if df is not None and not df.empty:
-                        day_intraday = df[df.index.date == last_day_d]
-                        if not day_intraday.empty:
-                            close_val = float(day_intraday['close'].iloc[-1])
                             
             return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': last_day_d, 'atr': atr_val}
             
