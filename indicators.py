@@ -1023,10 +1023,8 @@ def _get_ref_ohlc(d, daily_df, df, interval, close_method, bhavcopy_lookup, symb
             return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': prev_d, 'atr': atr_val}
             
         elif ref_type == 'weekly':
-            if include_current:
-                ref_date = d
-            else:
-                ref_date = d - datetime.timedelta(days=7)
+            # Always use previous week for CPR, even for Next Session
+            ref_date = d - datetime.timedelta(days=7)
                 
             week_df = pd.DataFrame()
             for offset in range(0, 5):
@@ -1055,19 +1053,26 @@ def _get_ref_ohlc(d, daily_df, df, interval, close_method, bhavcopy_lookup, symb
                 day_intraday = df[df.index.date == last_day_d]
                 if not day_intraday.empty:
                     close_val = float(day_intraday['close'].iloc[-1])
+            elif close_method == "Official Exchange LTP (Bhavcopy)":
+                from data_loader import load_bhavcopy_lookup
+                bhav_lookup = load_bhavcopy_lookup(last_day_d)
+                if bhav_lookup:
+                    clean_sym = symbol.upper() if symbol else ""
+                    if ":" in clean_sym:
+                        clean_sym = clean_sym.split(":")[1]
+                    clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                    if clean_sym in bhav_lookup:
+                        close_val = bhav_lookup[clean_sym]['ltp']
                             
             return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': last_day_d, 'atr': atr_val}
             
         elif ref_type == 'monthly':
-            if include_current:
-                ref_date = d
-            else:
-                ref_date = d.replace(day=1) - datetime.timedelta(days=1)
+            # Always use previous month for CPR, even for Next Session
+            ref_date = d.replace(day=1) - datetime.timedelta(days=1)
                 
             month_df = pd.DataFrame()
             for offset in range(0, 4):
-                first_day = ref_date.replace(day=1)
-                test_date = first_day - datetime.timedelta(days=1)
+                test_date = ref_date
                 for _ in range(offset):
                     test_date = test_date.replace(day=1) - datetime.timedelta(days=1)
                     
@@ -1096,6 +1101,16 @@ def _get_ref_ohlc(d, daily_df, df, interval, close_method, bhavcopy_lookup, symb
                 day_intraday = df[df.index.date == last_day_d]
                 if not day_intraday.empty:
                     close_val = float(day_intraday['close'].iloc[-1])
+            elif close_method == "Official Exchange LTP (Bhavcopy)":
+                from data_loader import load_bhavcopy_lookup
+                bhav_lookup = load_bhavcopy_lookup(last_day_d)
+                if bhav_lookup:
+                    clean_sym = symbol.upper() if symbol else ""
+                    if ":" in clean_sym:
+                        clean_sym = clean_sym.split(":")[1]
+                    clean_sym = clean_sym.replace("-EQ", "").replace("-INDEX", "").replace(".NS", "").strip()
+                    if clean_sym in bhav_lookup:
+                        close_val = bhav_lookup[clean_sym]['ltp']
                             
             return {'high': high_val, 'low': low_val, 'close': close_val, 'open': open_val, 'volume': vol_val, 'date': last_day_d, 'atr': atr_val}
             
