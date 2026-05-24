@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 IST = pytz.timezone('Asia/Kolkata')
 
 
-def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_session):
+def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_session, df=None, interval='1d'):
     """
     Fast CPR computation for a single date — avoids iterating all dates.
     Used when include_intraday=False. Returns a dict with CPR levels.
@@ -20,35 +20,22 @@ def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_ses
 
     # Determine which date's OHLC to use for CPR
     unique_dates = sorted(set(daily_df.index.date))
-    if target_session == "Next Session":
-        ref_date = unique_dates[-1]
-    else:
-        ref_date = unique_dates[-2] if len(unique_dates) >= 2 else unique_dates[-1]
+    latest_date = unique_dates[-1]
 
-    # Get ref date row
-    ref_mask = daily_df.index.date == ref_date
-    ref_rows = daily_df[ref_mask]
-    if ref_rows.empty:
+    # Resolve reference OHLC using indicators._get_ref_ohlc
+    include_curr = (target_session == "Next Session")
+    ref = indicators._get_ref_ohlc(latest_date, daily_df, df, interval, close_method, bhavcopy_lookup, symbol, include_current=include_curr)
+    
+    if ref is None:
         return None
 
-    ref_row = ref_rows.iloc[0] if len(ref_rows) == 1 else ref_rows.iloc[-1]
-    prev_high = float(ref_row['high'])
-    prev_low = float(ref_row['low'])
-
-    # Resolve close price based on method
-    if close_method == "Official Exchange LTP (Bhavcopy)" and bhavcopy_lookup:
-        clean_sym = symbol.split(':')[1].replace('-EQ', '').strip() if ':' in symbol else symbol
-        if clean_sym in bhavcopy_lookup:
-            prev_close = float(bhavcopy_lookup[clean_sym]['ltp'])
-        else:
-            prev_close = float(ref_row['close'])
-    elif close_method == "Intraday Candle Close":
-        prev_close = float(ref_row['close'])
-    else:
-        prev_close = float(ref_row['close'])
-
-    prev_open = float(ref_row['open'])
-    prev_volume = int(ref_row.get('volume', 0))
+    prev_high = ref['high']
+    prev_low = ref['low']
+    prev_close = ref['close']
+    prev_open = ref['open']
+    prev_volume = ref['volume']
+    ref_date = ref['date']
+    atr_val = ref['atr']
 
     # CPR formulas
     pp_raw = (prev_high + prev_low + prev_close) / 3
@@ -62,9 +49,6 @@ def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_ses
     tc = round(tc_raw, 2)
     width = abs(tc - bc)
 
-    # ATR(14) from daily data
-    atr_series = indicators.calculate_atr(daily_df, length=14)
-    atr_val = float(atr_series.iloc[-1]) if not atr_series.empty else 0.0
     atr_ratio = round(width / atr_val, 4) if atr_val > 0 else 0.0
 
     # CPR Type classification
@@ -103,7 +87,7 @@ def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_ses
 
     return {
         'Stock Name': symbol,
-        'Prev_Day_Date': ref_date.strftime('%d-%m-%Y'),
+        'Prev_Day_Date': ref_date.strftime('%d-%m-%Y') if hasattr(ref_date, 'strftime') else str(ref_date),
         'Close': round(last_close, 2),
         'CPR_Position': pos,
         'Prev_Open': round(prev_open, 2),
@@ -129,7 +113,7 @@ def _fast_cpr_single(daily_df, symbol, close_method, bhavcopy_lookup, target_ses
 
 def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Close",
                      bhavcopy_lookup=None, target_session="Current Session",
-                     include_intraday=False):
+                     include_intraday=False, interval="1d"):
     """
     CPR-only scanner — computes ATR-Normalized CPR levels + S/R.
 
@@ -139,7 +123,7 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
     if not include_intraday:
         # FAST PATH: compute CPR for single date, no full DataFrame processing
         result = _fast_cpr_single(daily_df if daily_df is not None and not daily_df.empty else df,
-                                  symbol, close_method, bhavcopy_lookup, target_session)
+                                  symbol, close_method, bhavcopy_lookup, target_session, df=df, interval=interval)
         return [result] if result else []
 
     # === INTRADAY MODE: Full processing ===
@@ -151,7 +135,7 @@ def check_conditions(df, symbol, daily_df=None, close_method="Intraday Candle Cl
     cpr_df = indicators.calculate_cpr(
         df, daily_df=daily_df, symbol=symbol,
         close_method=close_method, bhavcopy_lookup=bhavcopy_lookup,
-        target_session=target_session
+        target_session=target_session, interval=interval
     )
 
     last_date = df.index[-1].date()
@@ -257,7 +241,9 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
     data_cache = {}
     daily_cache = {}
 
-    if include_intraday:
+    should_fetch_intraday = include_intraday or (close_method == "Intraday Candle Close" and interval not in ['1d', 'D'])
+
+    if should_fetch_intraday:
         # === PHASE 1: FETCH INTRADATA ===
         logger.info(f"Phase 1: Pre-fetching {total} symbols ({interval})...")
         t1 = _time.time()
@@ -320,7 +306,7 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
 
     for sym in symbols:
         try:
-            if include_intraday:
+            if should_fetch_intraday:
                 # Intraday mode: use intraday data as main, daily for CPR accuracy
                 df = data_cache.get(sym)
                 daily_df = daily_cache.get(sym)
@@ -344,7 +330,8 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
                 close_method=close_method,
                 bhavcopy_lookup=bhavcopy_lookup,
                 target_session=target_session,
-                include_intraday=include_intraday
+                include_intraday=include_intraday,
+                interval=interval
             )
             if results:
                 all_results.extend(results)
