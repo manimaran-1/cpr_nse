@@ -349,7 +349,9 @@ def scan_market(symbols, interval='1d', progress_callback=None, close_method="In
     results_df = pd.DataFrame(all_results)
 
     t_end = _time.time()
-    logger.info(f"Scan complete: {len(results_df)} results from {len(data_cache) - skipped_count}/{len(data_cache)} fetched in {t_end-t0:.1f}s")
+    active_cache = data_cache if should_fetch_intraday else daily_cache
+    fetched = len(active_cache) - skipped_count
+    logger.info(f"Scan complete: {len(results_df)} results from {fetched}/{total} fetched in {t_end-t0:.1f}s")
 
     if not results_df.empty:
         return results_df.sort_values(by='CPR_ATR_Ratio', ascending=True)
