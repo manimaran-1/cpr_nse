@@ -34,7 +34,7 @@ on:
       close_method:
         description: 'CPR Close Baseline'
         required: false
-        default: 'Intraday Candle Close'
+        default: 'Official Exchange LTP (Bhavcopy)'
         type: choice
         options:
           - 'Intraday Candle Close'
